@@ -152,6 +152,128 @@ Inhalte:
 
 ---
 
+---
+
+## 2026-03-09 — Phase 2: Hardening & Operationalisierung
+
+Ausgangslage: Echter Scan auf Zielsystem (Raspberry Pi, User piko) ergab Risk Score 75/100.
+Reale Findings: `gateway_exposed` (CRITICAL), `server_exposed` (HIGH), `sessions_exposed` (HIGH),
+`workspace_permissions` (MEDIUM), `config_exposed` (MEDIUM) + 3× MEDIUM auto-fixable.
+
+### [2026-03-09] fix(server): Loopback-Binding explizit + LAN-Access-Log
+
+**Anlass:** `server_exposed`-Finding — Backend war an 0.0.0.0:3001 gebunden.
+
+**Änderungen in `scripts/server.py`:**
+- `HOST`-Default war bereits `127.0.0.1` (aus Phase-1-Refactor) — korrekt
+- Startup-Log ergänzt: zeigt LAN-Access-Status explizit an:
+  - `DISABLED (loopback only)` wenn Host = 127.0.0.1
+  - `ENABLED (OPENCLAW_HOST override)` wenn explizit überschrieben
+- `sessions_exposed` + `workspace_permissions` in `REMEDIATION_ALLOWLIST` registriert
+
+---
+
+### [2026-03-09] feat(install): systemd Service + Post-Install Security Advisory
+
+**Anlass:** `server.py` stirbt nach Gateway-Restart — kein Autostart vorhanden.
+
+**Neu erstellt:** `install/clawsec.service`
+- systemd Unit mit `User=piko` (Placeholder, install.sh setzt echten User)
+- `ProtectSystem=strict` — Filesystem read-only außer `ReadWritePaths`
+- `ReadWritePaths=/home/piko/.openclaw/workspace/clawsec/reports` (nur reports/)
+- `ReadOnlyPaths=/home/piko/.openclaw` — Scanner darf lesen, nicht schreiben
+- `NoNewPrivileges=yes`, `PrivateTmp=yes`
+- `Restart=on-failure`, `RestartSec=5s` — überlebt Gateway-Restart
+
+**`install.sh` Step 11 (systemd-Setup):**
+- Erkennt `systemctl`-Verfügbarkeit und sudo-Zugriff
+- Substituiert `User=piko` / `/home/piko` mit echtem `$USER` / `$HOME`
+- `sudo systemctl daemon-reload && enable && start`
+- Validiert mit `systemctl is-active`
+- Ohne sudo: Warnung + manuelle Anleitung
+
+**`install.sh` Step 12 (Gateway Advisory):**
+- Liest `gateway.bind` aus `openclaw.json` nach Install
+- CRITICAL-Warnung wenn Binding = `0.0.0.0` (Tier: never, manuell zu fixen)
+- Advisory-Box mit Scan + Dashboard URLs
+
+---
+
+### [2026-03-09] feat(remediation): sessions_exposed + workspace_permissions Scripts
+
+**Anlass:** `sessions_exposed` (384 .jsonl mit chmod 644) und `workspace_permissions` (775) —
+beide Tier 2 (approval-required).
+
+**Neu erstellt:** `scripts/remediation/sessions_exposed.sh`
+- Prüft `~/.openclaw/sessions/` und `~/.openclaw/agents/` (beide Locations)
+- `chmod 600` auf alle world-readable `*.jsonl`-Dateien
+- Idempotent: Exit 1 wenn keine exponierten Dateien gefunden
+- Verifiziert Ergebnis nach Fix
+
+**Neu erstellt:** `scripts/remediation/workspace_permissions.sh`
+- `chmod 750` auf `~/.openclaw/workspace/`
+- Idempotent: Exit 1 wenn bereits 700 oder 750
+- Verifiziert Ergebnis nach Fix
+
+---
+
+### [2026-03-09] feat(scan): workspace_permissions + config_exposed Checks
+
+**Anlass:** Zwei reale Findings aus Scan auf Zielsystem fehlten im Scanner.
+
+**Änderungen in `scripts/scan-environment.sh`:**
+- Domain 1 erweitert: `WORKSPACE_PERMS` via `stat -c '%a' ~/.openclaw/workspace`
+- Domain 1 erweitert: `CONFIG_PERMS` via `stat -c '%a' ~/.openclaw/openclaw.json`
+- Risk Emission:
+  - `workspace_permissions` (medium) wenn nicht 700/750 → ASI05:2025
+  - `config_exposed` (medium) wenn nicht 600/640 → LLM02:2025
+- JSON-Output `detected{}`: neue Felder `workspace_permissions` + `config_permissions`
+
+---
+
+### [2026-03-09] fix(plugin): Symlink-Detection Warning in register()
+
+**Anlass:** Skills werden nach Gateway-Restart sporadisch als "outside root" übersprungen
+weil alte Symlinks aus Vor-Refactor-Installationen noch vorhanden sind.
+
+**Änderungen in `src/coordinator.ts`:**
+- `register()` prüft beim Plugin-Load alle 6 `clawsec-*` SKILL.md via `lstatSync()`
+- Symlink erkannt → `console.warn` mit Copy-Befehl zum Fixen
+- Zähler: wenn >0 Symlinks → Hinweis `Re-run install.sh`
+- Keine blockierende Logik — Plugin lädt weiter, Warning ist diagnostisch
+
+---
+
+### [2026-03-09] feat(checks): Custom Check Definitions für Dashboard
+
+**Anlass:** `workspace_permissions` + `config_exposed` fehlten in der Check-Datenbank.
+
+**Neu erstellt:** `src/data/checks.js`
+- 7 Custom Checks: `env_gitignore`, `precommit_hook`, `workspace_permissions`,
+  `config_exposed`, `agent_communication_isolation`, `breach_notification_procedure`,
+  `runtime_package_install`
+- Jeder Check: `id`, `category`, `label`, `description`, `severity`, `phase`,
+  `framework`, `stage`, `guide` (steps + code + file + tips), `validation`
+
+---
+
+### Erwarteter Zustand nach Phase 2 (Zielsystem Raspberry Pi)
+
+| Finding | Vorher | Nachher |
+|---|---|---|
+| `gateway_exposed` | CRITICAL | CRITICAL (Tier: never — manuell) |
+| `server_exposed` | HIGH | RESOLVED (127.0.0.1 Default) |
+| `sessions_exposed` | HIGH | RESOLVED (nach Approval) |
+| `workspace_permissions` | MEDIUM | RESOLVED (nach Approval) |
+| `config_exposed` | MEDIUM | MEDIUM (Tier: never — Advisory) |
+| `precommit_hook` | MEDIUM | RESOLVED (auto) |
+| `breach_notification` | MEDIUM | RESOLVED (auto) |
+| `runtime_package` | MEDIUM | RESOLVED (auto) |
+
+Risk Score: 75/100 → ~30/100
+
+---
+
 ## Offene Punkte (geplante zukünftige Einträge)
 
 Beim Abschluss folgender Themen hier eintragen:
@@ -161,3 +283,4 @@ Beim Abschluss folgender Themen hier eintragen:
 - `[ ]` Heartbeat-Integration — OpenClaw Heartbeat-Hook-Verknüpfung
 - `[ ]` Dashboard-Design-Review — clawsec-ops-center.jsx API-Integration prüfen
 - `[ ]` scan-environment.sh jq-Test — Verifikation auf System ohne jq
+- `[ ]` gateway_exposed manuell beheben — openclaw.json gateway.bind auf 127.0.0.1
