@@ -384,9 +384,52 @@ else
   skip "npx not available or tsconfig.json missing — TypeScript check skipped"
 fi
 
-# ── Step 11: systemd Service (optional, recommended) ─────────────────────────
+# ── Step 11: Build dashboard ──────────────────────────────────────────────────
 
-step "Setting up systemd service..."
+step "Building ClawSec Dashboard..."
+
+DASHBOARD_DIR="${INSTALL_DIR}/dashboard"
+
+if [[ -d "$DASHBOARD_DIR" ]]; then
+  if command -v npm &>/dev/null; then
+    (cd "$DASHBOARD_DIR" && npm install --silent && npm run build --silent) \
+      && ok "Dashboard built: ${DASHBOARD_DIR}/dist" \
+      || warn "Dashboard build failed — run manually: cd ${DASHBOARD_DIR} && npm install && npm run build"
+  else
+    warn "npm not found — dashboard build skipped. Install Node.js >= 18 and re-run install.sh"
+  fi
+
+  # Optional: install dashboard systemd service (template unit, instantiated with @$USER)
+  DASH_SERVICE_TEMPLATE="${INSTALL_DIR}/install/clawsec-dashboard.service"
+  DASH_SERVICE_DEST="/etc/systemd/system/clawsec-dashboard@.service"
+  if [[ -f "$DASH_SERVICE_TEMPLATE" ]] && command -v systemctl &>/dev/null; then
+    if [[ "$EUID" -eq 0 ]] || sudo -n true 2>/dev/null; then
+      REAL_USER="$(whoami)"
+      sudo cp "$DASH_SERVICE_TEMPLATE" "$DASH_SERVICE_DEST"
+      sudo systemctl daemon-reload
+      sudo systemctl enable "clawsec-dashboard@${REAL_USER}.service"
+      sudo systemctl start "clawsec-dashboard@${REAL_USER}.service"
+      sleep 1
+      if systemctl is-active --quiet "clawsec-dashboard@${REAL_USER}.service"; then
+        ok "clawsec-dashboard@${REAL_USER}.service running (auto-start enabled)"
+      else
+        warn "clawsec-dashboard service not active — check: journalctl -u clawsec-dashboard@${REAL_USER} -n 10"
+      fi
+    else
+      REAL_USER="$(whoami)"
+      warn "No sudo access — dashboard service not installed automatically"
+      warn "To install manually:"
+      warn "  sudo cp ${DASH_SERVICE_TEMPLATE} ${DASH_SERVICE_DEST}"
+      warn "  sudo systemctl enable --now clawsec-dashboard@${REAL_USER}"
+    fi
+  fi
+else
+  skip "dashboard/ directory not found — dashboard build skipped"
+fi
+
+# ── Step 12: Backend systemd Service (optional, recommended) ─────────────────
+
+step "Setting up backend systemd service..."
 
 SERVICE_TEMPLATE="${INSTALL_DIR}/install/clawsec.service"
 SERVICE_DEST="/etc/systemd/system/clawsec.service"
@@ -488,8 +531,8 @@ echo "  5. Trigger first security scan:"
 echo "       Say: \"security scan\" to your Kairos agent"
 echo "       OR:  curl http://127.0.0.1:${CLAWSEC_BACKEND_PORT}/api/scan | python3 -m json.tool"
 echo ""
-echo "  6. Dashboard (after build):"
-echo "       cd ${INSTALL_DIR} && npm install --prefix src/ && npm run build --prefix src/"
-echo "       npx serve -s src/dist -l 8081"
+echo "  6. Dashboard (auto-built during install, or manually):"
+echo "       cd ${INSTALL_DIR}/dashboard && npm install && npm run build"
+echo "       npm run preview  # OR: sudo systemctl start clawsec-dashboard@\$(whoami)"
 echo "       # Dashboard: http://localhost:8081"
 echo ""

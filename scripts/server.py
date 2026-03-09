@@ -11,20 +11,47 @@ New in v2.0:
   GET  /api/reports                  → list available report files
 """
 
+import collections
+import hashlib
 import hmac
 import http.server
 import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from http import HTTPStatus
 from datetime import datetime, timezone
+
+# ── Runtime metrics ───────────────────────────────────────────────────────────
+
+SERVER_START_TIME = time.time()
+TOOL_CALL_COUNTER: collections.deque = collections.deque(maxlen=300)  # rolling 5-min window
+
+
+def record_tool_call() -> None:
+    TOOL_CALL_COUNTER.append(time.time())
+
+
+def tool_calls_last_5min() -> int:
+    cutoff = time.time() - 300
+    return sum(1 for t in TOOL_CALL_COUNTER if t > cutoff)
+
+
+def memory_used_mb() -> int:
+    try:
+        import psutil
+        return int(psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024)
+    except ImportError:
+        return 0  # psutil optional — graceful fallback
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +95,32 @@ REMEDIATION_ALLOWLIST: dict[str, str] = {
     "gateway_exposed":               "remediation/gateway_exposed.sh",
     # soul_writable + constraints_writable handled inline (chmod) — no script needed here
 }
+
+# Config files editable via /api/config/:key — strict whitelist
+# SOUL.md is chmod 444 (intentionally immutable) — server will get PermissionError → 403
+CONFIG_WHITELIST: dict[str, str] = {
+    "soul":        "workspace/SOUL.md",
+    "constraints": "workspace/CONSTRAINTS.md",
+    "gateway":     "workspace/GATEWAY.md",
+}
+CONFIG_MAX_BYTES = 65_536  # 64KB max per config file
+
+
+def compute_system_hash() -> str:
+    """SHA256 over identity files — first 8 chars for drift detection."""
+    identity_files = [
+        os.path.join(TARGET_DIR, "workspace", "SOUL.md"),
+        os.path.join(TARGET_DIR, "workspace", "CONSTRAINTS.md"),
+        os.path.join(TARGET_DIR, "openclaw.json"),
+    ]
+    h = hashlib.sha256()
+    for fp in identity_files:
+        try:
+            h.update(open(fp, "rb").read())
+        except (FileNotFoundError, PermissionError):
+            h.update(fp.encode())
+    return h.hexdigest()[:8]
+
 
 # ── Inter-Agent Auth Token (ASI07) ────────────────────────────────────────────
 # Prevents unauthorized local processes from triggering remediations via HTTP.
@@ -223,7 +276,25 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
         # GET /api/health
         if parsed.path == "/api/health":
-            return self.send_json(200, {"status": "ok", "version": VERSION})
+            return self.send_json(200, {
+                "status":      "ok",
+                "version":     VERSION,
+                "system_hash": compute_system_hash(),
+            })
+
+        # GET /api/heartbeat
+        if parsed.path == "/api/heartbeat":
+            return self.send_json(200, {
+                "status":               "active",
+                "agent_id":             "kairos",
+                "last_ping":            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "tool_calls_last_5min": tool_calls_last_5min(),
+                "current_skill":        "clawsec",
+                "memory_used_mb":       memory_used_mb(),
+                "uptime_seconds":       int(time.time() - SERVER_START_TIME),
+                "system_hash":          compute_system_hash(),
+                "version":              VERSION,
+            })
 
         # GET /api/agent/<agent_name>/scan
         if len(path_parts) == 4 and path_parts == ["api", "agent", path_parts[2], "scan"]:
@@ -235,14 +306,30 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
         # GET /api/scan → full scan (all agents sequentially, coordinator aggregates)
         if parsed.path == "/api/scan":
+            record_tool_call()
             all_results = {}
             for agent_name in AGENT_SCRIPTS:
                 all_results[agent_name] = run_agent_scan(agent_name)
-            return self.send_json(200, {
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+
+            timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            response_data = {
+                "timestamp":    timestamp,
                 "agent_results": all_results,
-                "version": VERSION,
-            })
+                "version":      VERSION,
+                "system_hash":  compute_system_hash(),
+            }
+
+            # Persist report to disk (reports/ dir is gitignored, mode 700)
+            try:
+                safe_ts = timestamp.replace(":", "-").replace(".", "-")
+                report_file = REPORTS_DIR / f"scan-{safe_ts}.json"
+                report_json = json.dumps(response_data, indent=2)
+                report_file.write_text(report_json)
+                (REPORTS_DIR / "last-scan.json").write_text(report_json)
+            except Exception as e:
+                print(f"[CLAWSEC] Warning: could not save report: {e}")
+
+            return self.send_json(200, response_data)
 
         # GET /api/last-report
         if parsed.path == "/api/last-report":
@@ -264,6 +351,19 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
             )[:20]  # Last 20 reports
             return self.send_json(200, {"reports": reports, "total": len(reports)})
 
+        # GET /api/reports/<filename> → serve individual report file
+        if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "reports":
+            filename = path_parts[2]
+            if not re.match(r'^[a-zA-Z0-9._-]{1,80}$', filename) or '..' in filename:
+                return self.send_json(400, {"error": "Invalid filename"})
+            report_path = REPORTS_DIR / filename
+            if not report_path.exists():
+                return self.send_json(404, {"error": "Report not found"})
+            try:
+                return self.send_json(200, json.loads(report_path.read_text()))
+            except Exception:
+                return self.send_json(500, {"error": "Internal error"})
+
         # GET /api/checks
         if parsed.path == "/api/checks":
             return self.send_json(200, {
@@ -281,6 +381,7 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "apply":
             if not _require_token(self):
                 return
+            record_tool_call()
             check_id = path_parts[2]
 
             # Validate checkId: alphanumeric + underscore, max 64 chars
@@ -314,6 +415,36 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 "exit_code": exit_code,
                 "duration_ms": duration,
             })
+
+        # POST /api/config/<file_key> — requires token, strict whitelist
+        if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "config":
+            if not _require_token(self):
+                return
+            file_key = path_parts[2]
+            if file_key not in CONFIG_WHITELIST:
+                return self.send_json(400, {"error": f"Not editable: {file_key}"})
+            length = int(self.headers.get("Content-Length", 0))
+            if length > CONFIG_MAX_BYTES:
+                return self.send_json(413, {"error": "Content too large"})
+            body = self.rfile.read(length).decode("utf-8", errors="replace")
+            target_path = Path(TARGET_DIR) / CONFIG_WHITELIST[file_key]
+            backup_path = target_path.with_suffix(target_path.suffix + ".bak")
+            try:
+                if target_path.exists():
+                    shutil.copy2(target_path, backup_path)
+                target_path.write_text(body)
+                return self.send_json(200, {
+                    "success": True,
+                    "file": file_key,
+                    "system_hash": compute_system_hash(),
+                })
+            except PermissionError:
+                return self.send_json(403, {
+                    "error": f"{file_key} is immutable (chmod 444)",
+                    "hint": "SOUL.md and CONSTRAINTS.md are intentionally write-protected",
+                })
+            except Exception:
+                return self.send_json(500, {"error": "Internal error"})
 
         return self.send_json(404, {"error": "Not found"})
 
