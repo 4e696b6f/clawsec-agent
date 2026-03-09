@@ -37,7 +37,7 @@ json_bool() {
   [[ "$1" == "true" ]] && echo "true" || echo "false"
 }
 
-# ── Domain 1: Identity (SOUL.md, CONSTRAINTS.md) ─────────────────────────────
+# ── Domain 1: Identity (SOUL.md, CONSTRAINTS.md, workspace dir, config) ──────
 
 SOUL_FILE="${TARGET_DIR}/workspace/SOUL.md"
 CONSTRAINTS_FILE="${TARGET_DIR}/workspace/CONSTRAINTS.md"
@@ -52,6 +52,17 @@ if [[ -f "$CONSTRAINTS_FILE" ]]; then
   CONSTRAINTS_PERMS=$(stat -c '%a' "$CONSTRAINTS_FILE" 2>/dev/null || echo "unknown")
 else
   CONSTRAINTS_PERMS="missing"
+fi
+
+# Workspace directory permissions (should be 700 or 750)
+WORKSPACE_PERMS=$(stat -c '%a' "${TARGET_DIR}/workspace" 2>/dev/null || echo "unknown")
+
+# openclaw.json permissions (should be 600 or 640)
+CONFIG_FILE="${TARGET_DIR}/openclaw.json"
+if [[ -f "$CONFIG_FILE" ]]; then
+  CONFIG_PERMS=$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || echo "unknown")
+else
+  CONFIG_PERMS="missing"
 fi
 
 # ── Domain 2: Credentials (.env, gitignore, pre-commit) ──────────────────────
@@ -215,6 +226,21 @@ if [[ "$CONSTRAINTS_PERMS" != "444" && "$CONSTRAINTS_PERMS" != "missing" && "$CO
     "LLM07:2025 System Prompt Leakage / ASI01:2025 Goal Hijacking"
 fi
 
+# Domain 1 (extended): workspace permissions + config exposure
+# workspace_permissions: 700/750 = ok; 755/775/777 = too open
+if [[ "$WORKSPACE_PERMS" != "unknown" && "$WORKSPACE_PERMS" != "700" && "$WORKSPACE_PERMS" != "750" ]]; then
+  add_risk "workspace_permissions" "medium" \
+    "Workspace directory is ${WORKSPACE_PERMS} — should be 750 or stricter" \
+    "ASI05:2025 Excessive Permissions"
+fi
+
+# config_exposed: openclaw.json should be 600 or 640 (not world-readable)
+if [[ "$CONFIG_PERMS" != "missing" && "$CONFIG_PERMS" != "600" && "$CONFIG_PERMS" != "640" ]]; then
+  add_risk "config_exposed" "medium" \
+    "openclaw.json is ${CONFIG_PERMS} — should be 640 or stricter (may contain credentials)" \
+    "LLM02:2025 Sensitive Information Disclosure"
+fi
+
 # Domain 2: Credentials
 if [[ "$ENV_FILES" != "[]" && "$GITIGNORE_ENV" == "false" ]]; then
   add_risk "env_gitignore" "high" \
@@ -292,6 +318,8 @@ output = {
         "server_binding":         "${SERVER_BINDING}",
         "soul_permissions":       "${SOUL_PERMS}",
         "constraints_permissions":"${CONSTRAINTS_PERMS}",
+        "workspace_permissions":  "${WORKSPACE_PERMS}",
+        "config_permissions":     "${CONFIG_PERMS}",
         "gateway_binding":        "${GATEWAY_BINDING}",
         "sessions_readable":      "${SESSIONS_READABLE}"
     },
