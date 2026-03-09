@@ -123,7 +123,7 @@ except Exception as e:
   esac
 fi
 
-# ── Domain 4: Sessions (.jsonl permissions) ───────────────────────────────────
+# ── Domain 4: Sessions (.jsonl permissions + isolation structure) ─────────────
 
 SESSIONS_READABLE="none"
 for SESS_DIR in "${TARGET_DIR}/sessions" "${TARGET_DIR}/agents"; do
@@ -137,6 +137,21 @@ for SESS_DIR in "${TARGET_DIR}/sessions" "${TARGET_DIR}/agents"; do
     fi
   fi
 done
+
+# Session isolation: flat = all channels/users in one dir, isolated = per-channel subdirs
+# ASI03:2025 — segregate execution contexts and memory per user/agent
+SESSION_STRUCTURE="unknown"
+if [[ -d "${TARGET_DIR}/sessions" ]]; then
+  FLAT_COUNT=$(find "${TARGET_DIR}/sessions" -maxdepth 1 -name "*.jsonl" 2>/dev/null | wc -l)
+  SUBDIR_COUNT=$(find "${TARGET_DIR}/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  if [[ "$FLAT_COUNT" -gt 0 && "$SUBDIR_COUNT" -eq 0 ]]; then
+    SESSION_STRUCTURE="flat"
+  elif [[ "$SUBDIR_COUNT" -gt 0 ]]; then
+    SESSION_STRUCTURE="isolated"
+  else
+    SESSION_STRUCTURE="empty"
+  fi
+fi
 
 # ── Domain 5: Config & CI ─────────────────────────────────────────────────────
 
@@ -262,8 +277,8 @@ if [[ "$SERVER_BINDING" == "exposed" ]]; then
 fi
 
 if [[ "$GATEWAY_BINDING" == "any" ]]; then
-  add_risk "gateway_exposed" "high" \
-    "OpenClaw gateway not restricted to loopback — gateway API reachable from network" \
+  add_risk "gateway_exposed" "critical" \
+    "OpenClaw gateway bound to 0.0.0.0 — Control Plane reachable from LAN without authentication" \
     "LLM06:2025 Excessive Agency / ASI05:2025 Excessive Permissions"
 fi
 
@@ -272,6 +287,12 @@ if [[ "$SESSIONS_READABLE" == "world_readable" ]]; then
   add_risk "sessions_exposed" "high" \
     "Session log files are world-readable — conversation history exposed" \
     "LLM02:2025 Sensitive Information Disclosure"
+fi
+
+if [[ "$SESSION_STRUCTURE" == "flat" ]]; then
+  add_risk "session_isolation" "medium" \
+    "Sessions stored flat in sessions/ — no per-channel/per-user isolation" \
+    "ASI03:2025 Identity & Privilege Abuse"
 fi
 
 # Domain 5: Config & CI
@@ -321,7 +342,8 @@ output = {
         "workspace_permissions":  "${WORKSPACE_PERMS}",
         "config_permissions":     "${CONFIG_PERMS}",
         "gateway_binding":        "${GATEWAY_BINDING}",
-        "sessions_readable":      "${SESSIONS_READABLE}"
+        "sessions_readable":      "${SESSIONS_READABLE}",
+        "session_structure":      "${SESSION_STRUCTURE}"
     },
     "risks": ${RISKS}
 }
