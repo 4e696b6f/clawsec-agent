@@ -115,7 +115,106 @@ if [[ -n "$MCP_EXPOSED" ]]; then
     "Review MCP server config in openclaw.json — remove external/expose flags or restrict bind address"
 fi
 
-# ── Check 3: openclaw.json world-readable ────────────────────────────────────
+# ── Check 3: Exec security set to "full" (any command allowed) ───────────────
+EXEC_SECURITY=$(python3 -c "
+import json, sys
+try:
+    with open('$OPENCLAW_JSON') as f:
+        d = json.load(f)
+    val = d.get('exec_security', d.get('execSecurity', 'deny'))
+    print(str(val).lower())
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+
+if [[ "$EXEC_SECURITY" == "full" || "$EXEC_SECURITY" == "allow" || "$EXEC_SECURITY" == "true" ]]; then
+  add_finding \
+    "exec_security_full" "high" \
+    "Exec security is set to '${EXEC_SECURITY}' — all shell commands execute without approval" \
+    "LLM08:2025 Excessive Agency" \
+    "ASI02:2025 Unauthorized Code Execution" \
+    "never" \
+    "Set exec_security to 'deny' in openclaw.json — requires restart. Use allowlist for specific trusted commands."
+fi
+
+# ── Check 4: DM policy set to "open" (anyone can DM the agent) ───────────────
+DM_POLICY=$(python3 -c "
+import json, sys
+try:
+    with open('$OPENCLAW_JSON') as f:
+        d = json.load(f)
+    val = d.get('dm_policy', d.get('dmPolicy', d.get('dm', {}).get('policy', 'pairing')))
+    print(str(val).lower())
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+
+if [[ "$DM_POLICY" == "open" || "$DM_POLICY" == "all" || "$DM_POLICY" == "any" ]]; then
+  add_finding \
+    "dm_policy_open" "high" \
+    "DM policy is '${DM_POLICY}' — any sender can interact with the agent without pairing" \
+    "LLM01:2025 Prompt Injection" \
+    "ASI01:2025 Goal Hijacking" \
+    "never" \
+    "Set dm_policy to 'pairing' or 'allowlist' in openclaw.json — requires restart"
+fi
+
+# ── Check 5: allowFrom unconfigured (defaults to self-only but worth flagging) ─
+ALLOW_FROM=$(python3 -c "
+import json, sys
+try:
+    with open('$OPENCLAW_JSON') as f:
+        d = json.load(f)
+    val = d.get('allowFrom', d.get('allow_from', None))
+    if val is None:
+        print('not_set')
+    elif isinstance(val, list) and len(val) == 0:
+        print('empty')
+    elif val in ('*', 'all', 'any'):
+        print('wildcard')
+    else:
+        print('configured')
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+
+if [[ "$ALLOW_FROM" == "wildcard" ]]; then
+  add_finding \
+    "allowfrom_wildcard" "high" \
+    "allowFrom is set to wildcard ('*') — any sender on any channel can reach the agent" \
+    "LLM08:2025 Excessive Agency" \
+    "ASI05:2025 Excessive Permissions" \
+    "never" \
+    "Set allowFrom to explicit sender IDs or phone numbers in openclaw.json"
+fi
+
+# ── Check 6: SSRF protection disabled ────────────────────────────────────────
+SSRF_STATUS=$(python3 -c "
+import json, sys
+try:
+    with open('$OPENCLAW_JSON') as f:
+        d = json.load(f)
+    security = d.get('security', {})
+    ssrf = security.get('ssrf_protection', security.get('ssrfProtection', True))
+    if ssrf is False or str(ssrf).lower() in ('disabled', 'off', 'false', 'none'):
+        print('disabled')
+    else:
+        print('enabled')
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+
+if [[ "$SSRF_STATUS" == "disabled" ]]; then
+  add_finding \
+    "ssrf_protection_disabled" "high" \
+    "SSRF protection is explicitly disabled — agent can fetch internal IPs and localhost URLs" \
+    "LLM02:2025 Sensitive Information Disclosure" \
+    "ASI05:2025 Excessive Permissions" \
+    "never" \
+    "Remove security.ssrf_protection: false from openclaw.json — SSRF protection is on by default and must stay enabled"
+fi
+
+# ── Check 8: openclaw.json world-readable ────────────────────────────────────
 JSON_PERMS=$(stat -c '%a' "$OPENCLAW_JSON" 2>/dev/null || echo "unknown")
 if [[ "${JSON_PERMS: -1}" =~ [4-7] ]]; then
   add_finding \

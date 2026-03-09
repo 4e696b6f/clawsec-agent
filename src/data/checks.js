@@ -289,6 +289,137 @@ export const CUSTOM_CHECKS = [
     },
   },
 
+  // ── OpenClaw Trust Framework Checks (trust.openclaw.ai) ─────────────────
+
+  {
+    id: "exec_security_full",
+    category: "Access Control",
+    label: "Exec Security: Full Access Mode",
+    description:
+      "openclaw.json has exec_security set to 'full', meaning the agent can execute any " +
+      "shell command without approval. This is the most dangerous configuration — any prompt " +
+      "injection or indirect injection can run arbitrary code on the host machine. " +
+      "OpenClaw's secure default is 'deny' with allowlist.",
+    severity: "high",
+    phase: "runtime",
+    framework: "openclaw-trust",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Edit ~/.openclaw/openclaw.json: set exec_security to 'deny'",
+        "Add trusted commands to the exec allowlist individually",
+        "Restart: openclaw gateway restart",
+        "Verify: openclaw security audit --deep",
+      ],
+      code: "# In ~/.openclaw/openclaw.json:\n{ \"exec_security\": \"deny\", \"exec_allowlist\": [\"git\", \"ls\", \"cat\"] }",
+      file: "~/.openclaw/openclaw.json",
+      tips: [
+        "Tier 'never' — requires careful review of which commands you actually need",
+        "OpenClaw defaults to 'deny' — 'full' is an explicit opt-in that should be reviewed",
+      ],
+    },
+    validation: {
+      checklist: ["exec_security is 'deny' or not set to 'full'"],
+      script: "python3 -c \"import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); exit(0 if d.get('exec_security','deny') not in ['full','allow','true'] else 1)\"",
+    },
+  },
+
+  {
+    id: "dm_policy_open",
+    category: "Access Control",
+    label: "DM Policy: Open (No Pairing Required)",
+    description:
+      "The DM policy is set to 'open', meaning any sender on any channel can interact with " +
+      "the agent without a pairing flow. This is a critical prompt injection risk — " +
+      "attackers can DM the agent directly and manipulate it. " +
+      "OpenClaw's secure default is 'pairing' (unknown senders complete a one-time code flow).",
+    severity: "high",
+    phase: "runtime",
+    framework: "openclaw-trust",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Edit ~/.openclaw/openclaw.json: set dm_policy to 'pairing' or 'allowlist'",
+        "Restart: openclaw gateway restart",
+        "Existing paired senders are not affected by this change",
+      ],
+      code: "# In ~/.openclaw/openclaw.json:\n{ \"dm_policy\": \"pairing\" }",
+      file: "~/.openclaw/openclaw.json",
+      tips: [
+        "Tier 'never' — operator decision, requires restart",
+        "'pairing' = unknown senders complete one-time code flow (recommended)",
+        "'allowlist' = only explicitly listed senders can interact (most restrictive)",
+      ],
+    },
+    validation: {
+      checklist: ["dm_policy is 'pairing' or 'allowlist'"],
+      script: "python3 -c \"import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); exit(0 if d.get('dm_policy','pairing') in ['pairing','allowlist'] else 1)\"",
+    },
+  },
+
+  {
+    id: "allowfrom_wildcard",
+    category: "Access Control",
+    label: "allowFrom: Wildcard Configuration",
+    description:
+      "allowFrom is set to wildcard ('*' or 'all'), granting any sender on any channel " +
+      "full access to the agent. Combined with dm_policy 'pairing', this means any paired " +
+      "sender can trigger any tool. Explicit sender IDs are strongly recommended.",
+    severity: "high",
+    phase: "runtime",
+    framework: "openclaw-trust",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Edit ~/.openclaw/openclaw.json: replace allowFrom wildcard with explicit sender IDs",
+        "Example: allowFrom: [\"+491701234567\"] for WhatsApp/Telegram phone number",
+        "Restart: openclaw gateway restart",
+      ],
+      code: "# In ~/.openclaw/openclaw.json:\n{ \"allowFrom\": [\"+491701234567\", \"your-discord-id\"] }",
+      file: "~/.openclaw/openclaw.json",
+      tips: [
+        "Tier 'never' — operator must know their own sender IDs",
+        "Find your Telegram ID: message @userinfobot",
+      ],
+    },
+    validation: {
+      checklist: ["allowFrom is explicit list, not wildcard"],
+      script: "python3 -c \"import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); af=d.get('allowFrom',''); exit(0 if af not in ['*','all','any'] else 1)\"",
+    },
+  },
+
+  {
+    id: "ssrf_protection_disabled",
+    category: "Network",
+    label: "SSRF Protection Disabled",
+    description:
+      "SSRF (Server-Side Request Forgery) protection has been explicitly disabled in " +
+      "openclaw.json. OpenClaw's SSRF guard blocks the agent from fetching internal IPs " +
+      "(10.x.x.x, 192.168.x.x) and localhost URLs via web_fetch. Without it, indirect " +
+      "injection via crafted web pages can exfiltrate data from internal services.",
+    severity: "high",
+    phase: "runtime",
+    framework: "openclaw-trust",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Remove security.ssrf_protection: false from ~/.openclaw/openclaw.json",
+        "SSRF protection is ON by default — it only needs a flag to turn it OFF",
+        "Restart: openclaw gateway restart",
+      ],
+      code: "# Remove this line from ~/.openclaw/openclaw.json:\n# \"ssrf_protection\": false",
+      file: "~/.openclaw/openclaw.json",
+      tips: [
+        "Tier 'never' — should never be disabled in production",
+        "If you need local URL access, use explicit per-tool allow rules instead",
+      ],
+    },
+    validation: {
+      checklist: ["SSRF protection is not explicitly disabled"],
+      script: "python3 -c \"import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); exit(0 if d.get('security',{}).get('ssrf_protection',True) is not False else 1)\"",
+    },
+  },
+
   // ── CI / Runtime ─────────────────────────────────────────────────────────
 
   {
