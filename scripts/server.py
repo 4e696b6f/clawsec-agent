@@ -11,10 +11,12 @@ New in v2.0:
   GET  /api/reports                  → list available report files
 """
 
+import hmac
 import http.server
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -55,7 +57,7 @@ AGENT_SCRIPTS: dict[str, str] = {
 
 # Remediation script allowlist (checkId → script path)
 # Tier 1 (auto): env_gitignore, precommit_hook, breach_notification_procedure, runtime_package_install
-# Tier 2 (approval): sessions_exposed, workspace_permissions
+# Tier 2 (approval): sessions_exposed, workspace_permissions, gateway_exposed
 REMEDIATION_ALLOWLIST: dict[str, str] = {
     "env_gitignore":                 "remediation/env_gitignore.sh",
     "precommit_hook":                "remediation/precommit_hook.sh",
@@ -63,8 +65,44 @@ REMEDIATION_ALLOWLIST: dict[str, str] = {
     "runtime_package_install":       "remediation/runtime_package_install.sh",
     "sessions_exposed":              "remediation/sessions_exposed.sh",
     "workspace_permissions":         "remediation/workspace_permissions.sh",
+    "gateway_exposed":               "remediation/gateway_exposed.sh",
     # soul_writable + constraints_writable handled inline (chmod) — no script needed here
 }
+
+# ── Inter-Agent Auth Token (ASI07) ────────────────────────────────────────────
+# Prevents unauthorized local processes from triggering remediations via HTTP.
+# Token is auto-generated on first start and stored at 600 permissions.
+# Only mutating endpoints (/api/apply/) require the token.
+# Read-only endpoints (health, scan, reports) remain open — no secrets exposed.
+
+TOKEN_FILE = SCRIPT_DIR.parent / ".clawsec_token"
+
+
+def _load_or_create_token() -> str:
+    """Load token from file or generate a new one with chmod 600."""
+    if TOKEN_FILE.exists():
+        return TOKEN_FILE.read_text().strip()
+    token = secrets.token_hex(32)
+    TOKEN_FILE.write_text(token)
+    TOKEN_FILE.chmod(0o600)
+    print(f"[CLAWSEC] Auth token generated: {TOKEN_FILE}")
+    return token
+
+
+CLAWSEC_TOKEN = _load_or_create_token()
+
+
+def _require_token(handler_self) -> bool:
+    """Check X-ClawSec-Token header. Sends 401 and returns False if unauthorized."""
+    auth = handler_self.headers.get("X-ClawSec-Token", "")
+    if not hmac.compare_digest(auth, CLAWSEC_TOKEN):
+        handler_self.send_response(401)
+        handler_self.send_header("Content-Type", "application/json")
+        handler_self.send_header("X-Content-Type-Options", "nosniff")
+        handler_self.end_headers()
+        handler_self.wfile.write(b'{"error": "Unauthorized"}')
+        return False
+    return True
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,7 +111,7 @@ def cors_headers(origin: str) -> dict:
         return {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Headers": "Content-Type, X-ClawSec-Token",
             "Access-Control-Max-Age": "86400",
             "Vary": "Origin",
         }
@@ -239,8 +277,10 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path_parts = parsed.path.strip("/").split("/")
 
-        # POST /api/apply/<checkId>
+        # POST /api/apply/<checkId>  — requires X-ClawSec-Token (ASI07)
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "apply":
+            if not _require_token(self):
+                return
             check_id = path_parts[2]
 
             # Validate checkId: alphanumeric + underscore, max 64 chars
@@ -328,6 +368,7 @@ if __name__ == "__main__":
     server = http.server.HTTPServer((HOST, PORT), ClawSecHandler)
     print(f"[CLAWSEC] Server v{VERSION} running on http://{HOST}:{PORT}")
     print(f"[CLAWSEC] LAN access: {'ENABLED (OPENCLAW_HOST override)' if HOST != '127.0.0.1' else 'DISABLED (loopback only)'}")
+    print(f"[CLAWSEC] Auth token: {TOKEN_FILE}")
     print(f"[CLAWSEC] Target directory: {TARGET_DIR}")
     print(f"[CLAWSEC] Reports directory: {REPORTS_DIR}")
     print(f"[CLAWSEC] Sub-agents: {', '.join(AGENT_SCRIPTS.keys())}")
