@@ -15,8 +15,11 @@ import http.server
 import json
 import os
 import re
+import socket
 import subprocess
+import sys
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from http import HTTPStatus
 from datetime import datetime, timezone
@@ -271,11 +274,53 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
         return self.send_json(404, {"error": "Not found"})
 
 
+# ── Port Conflict Detection ───────────────────────────────────────────────────
+
+def check_port(host: str, port: int) -> str:
+    """
+    Returns 'free', 'self', or 'other'.
+    - 'free'  : port is not in use → safe to start
+    - 'self'  : port is occupied by our own ClawSec server → skip start
+    - 'other' : port is occupied by a different process → error
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    result = sock.connect_ex((host, port))
+    sock.close()
+
+    if result != 0:
+        return "free"
+
+    # Port is occupied — check if it's our own server via /api/health
+    try:
+        url = f"http://{host}:{port}/api/health"
+        with urllib.request.urlopen(url, timeout=2) as r:
+            data = json.loads(r.read())
+            if data.get("status") == "ok":
+                return "self"
+    except Exception:
+        pass
+
+    return "other"
+
+
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    
+
+    # Port conflict detection — run before binding
+    port_status = check_port(HOST, PORT)
+    if port_status == "self":
+        print(f"[CLAWSEC] Server already running on {HOST}:{PORT} — skipping start")
+        sys.exit(0)
+    elif port_status == "other":
+        print(f"[CLAWSEC] ERROR: Port {PORT} is in use by another process")
+        print(f"[CLAWSEC] Fix:   lsof -ti:{PORT} | xargs kill -9")
+        print(f"[CLAWSEC] Then:  python3 {__file__} &")
+        sys.exit(2)
+    # port_status == "free" → proceed with normal startup
+
     server = http.server.HTTPServer((HOST, PORT), ClawSecHandler)
     print(f"[CLAWSEC] Server v{VERSION} running on http://{HOST}:{PORT}")
     print(f"[CLAWSEC] Target directory: {TARGET_DIR}")

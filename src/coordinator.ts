@@ -11,10 +11,15 @@
  * Manifest: openclaw.plugin.json alongside this file
  */
 
-import fs from "fs";
-import path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
+// CommonJS imports — required for OpenClaw extension loader compatibility
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const fs = require("fs") as typeof import("fs");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const path = require("path") as typeof import("path");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { execFile } = require("child_process") as typeof import("child_process");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { promisify } = require("util") as typeof import("util");
 
 const execFileAsync = promisify(execFile);
 
@@ -257,7 +262,7 @@ function appendChangelog(entries: string[]): void {
 
 // ─── Main Coordinator Logic ───────────────────────────────────────────────────
 
-export async function runSecurityScan(
+async function runSecurityScan(
   options: {
     isHeartbeat?: boolean;
     skipAutoFix?: boolean;
@@ -412,8 +417,12 @@ function buildSummary(
 }
 
 // ─── OpenClaw Plugin Registration ────────────────────────────────────────────
+//
+// OpenClaw's extension loader uses CommonJS require().
+// module.exports must be a function that accepts the OpenClaw API object.
+// ESM "export default" is not supported — use module.exports directly.
 
-export default function register(api: {
+function register(api: {
   on: (event: string, handler: Function, opts?: object) => void;
   runtime: { paths: { workspace: string } };
 }) {
@@ -451,3 +460,7 @@ export default function register(api: {
     }
   });
 }
+
+// CommonJS export — required by OpenClaw's extension loader (uses require())
+// This is the only export this module exposes to the runtime.
+module.exports = register;

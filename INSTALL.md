@@ -1,117 +1,204 @@
-# ClawSec 2.0 — File Structure & Install Guide
+# ClawSec 2.0 — Install Guide
 
-## Complete File Structure
-
-```
-~/.openclaw/workspace/clawsec/          ← ClawSec runtime root
-│
-├── openclaw.plugin.json                ← OpenClaw plugin manifest
-│
-├── src/
-│   └── coordinator.ts                  ← OpenClaw plugin + coordinator logic
-│
-├── skills/
-│   ├── clawsec-coordinator/
-│   │   └── SKILL.md                    ← Gateway agent orchestrator skill
-│   └── agents/
-│       ├── env-agent/SKILL.md          ← Credentials sub-agent
-│       ├── permission-agent/SKILL.md   ← Filesystem perms sub-agent
-│       ├── network-agent/SKILL.md      ← Network exposure sub-agent
-│       ├── session-agent/SKILL.md      ← Session data sub-agent
-│       └── config-agent/SKILL.md       ← Config security sub-agent
-│
-├── scripts/
-│   ├── server.py                       ← HTTP backend (127.0.0.1:3001)
-│   ├── scan/
-│   │   ├── scan-env.sh                 ← ENV agent bash scanner
-│   │   ├── scan-perm.sh                ← PERM agent bash scanner
-│   │   ├── scan-net.sh                 ← NET agent bash scanner
-│   │   ├── scan-session.sh             ← SESSION agent bash scanner
-│   │   └── scan-config.sh              ← CONFIG agent bash scanner
-│   └── remediation/
-│       ├── env_gitignore.sh
-│       ├── precommit_hook.sh
-│       ├── breach_notification_procedure.sh
-│       └── runtime_package_install.sh
-│
-├── reports/                            ← gitignored
-│   ├── last-scan.json
-│   └── scan-YYYYMMDD_HHMMSS.json
-│
-└── docker/
-    ├── seccomp-agent.json
-    └── docker-compose.security.yml
-
-~/.openclaw/skills/clawsec-coordinator/ ← OpenClaw skill registry
-└── SKILL.md                            → symlink to skills/clawsec-coordinator/SKILL.md
-
-~/.openclaw/skills/clawsec-env/
-└── SKILL.md                            → symlink to skills/agents/env-agent/SKILL.md
-
-(etc. for all 5 sub-agent skills)
-
-~/.openclaw/extensions/clawsec/         ← OpenClaw plugin auto-discovery
-└── index.ts                            → symlink to src/coordinator.ts
-```
-
-## Install Steps
+## Quick Install
 
 ```bash
-# 1. Clone into workspace
-git clone https://github.com/4e696b6f/clawsec \
-  ~/.openclaw/workspace/clawsec
+# From the cloned repository root:
+bash install.sh
 
-# 2. Register plugin with OpenClaw
-mkdir -p ~/.openclaw/extensions/clawsec
-ln -sf ~/.openclaw/workspace/clawsec/src/coordinator.ts \
-       ~/.openclaw/extensions/clawsec/index.ts
-cp ~/.openclaw/workspace/clawsec/openclaw.plugin.json \
-   ~/.openclaw/extensions/clawsec/
+# With custom OpenClaw home:
+bash install.sh --openclaw-home /path/to/.openclaw
+```
 
-# 3. Register all skills
-for skill in clawsec-coordinator clawsec-env clawsec-perm clawsec-net clawsec-session clawsec-config; do
-  mkdir -p ~/.openclaw/skills/$skill
-done
-ln -sf ~/.openclaw/workspace/clawsec/skills/clawsec-coordinator/SKILL.md \
-       ~/.openclaw/skills/clawsec-coordinator/SKILL.md
-ln -sf ~/.openclaw/workspace/clawsec/skills/agents/env-agent/SKILL.md \
-       ~/.openclaw/skills/clawsec-env/SKILL.md
-ln -sf ~/.openclaw/workspace/clawsec/skills/agents/permission-agent/SKILL.md \
-       ~/.openclaw/skills/clawsec-perm/SKILL.md
-ln -sf ~/.openclaw/workspace/clawsec/skills/agents/network-agent/SKILL.md \
-       ~/.openclaw/skills/clawsec-net/SKILL.md
-ln -sf ~/.openclaw/workspace/clawsec/skills/agents/session-agent/SKILL.md \
-       ~/.openclaw/skills/clawsec-session/SKILL.md
-ln -sf ~/.openclaw/workspace/clawsec/skills/agents/config-agent/SKILL.md \
-       ~/.openclaw/skills/clawsec-config/SKILL.md
+The installer handles everything: workspace copy, skills, extension, permissions, and plugin activation.
 
-# 4. Make scripts executable
-chmod +x ~/.openclaw/workspace/clawsec/scripts/scan/*.sh
-chmod +x ~/.openclaw/workspace/clawsec/scripts/remediation/*.sh
+---
 
-# 5. Start backend
+## What install.sh Does
+
+**Important:** All files are **copied** (not symlinked).
+OpenClaw's skill-loader calls `realpath()` on every loaded file and silently skips
+any path that resolves outside its configured root. Symlinks pointing to `/tmp/` or
+other locations outside `~/.openclaw/` would be skipped without error.
+
+### Steps performed:
+
+| Step | Action |
+|------|--------|
+| 1 | Verify `~/.openclaw/` exists |
+| 2 | **Copy** ClawSec to `~/.openclaw/workspace/clawsec/` (no symlinks) |
+| 3 | **Copy** 6 skills to `~/.openclaw/skills/<skill-name>/SKILL.md` |
+| 4 | **Copy** plugin to `~/.openclaw/extensions/clawsec/index.ts` |
+| 5 | `chmod +x` all scanner + remediation scripts |
+| 6 | `chmod 444` SOUL.md + CONSTRAINTS.md (immutable identity files) |
+| 7 | Port-check: verify port 3001 is free (or already ours) |
+| 8 | Validate `server.py` syntax |
+| 9 | Patch `openclaw.json` to enable the ClawSec plugin (idempotent) |
+| 10 | Optional: TypeScript validation via `npx tsc --noEmit` |
+
+---
+
+## After Install
+
+```bash
+# 1. Start backend
 python3 ~/.openclaw/workspace/clawsec/scripts/server.py &
 
-# 6. Verify
+# 2. Verify health
 curl http://127.0.0.1:3001/api/health
-# → {"status": "ok", "version": "2.0.0"}
+# Expected: {"status": "ok", "version": "2.0.0"}
 
-# 7. Test individual agent
-curl http://127.0.0.1:3001/api/agent/clawsec-perm/scan
-# → SubAgentResult JSON
+# 3. Restart OpenClaw gateway (required for plugin + skills to load)
+openclaw gateway restart
+
+# 4. Verify plugin loaded
+grep -i 'clawsec' ~/.openclaw/logs/openclaw-$(date +%Y-%m-%d).log
+# Expected: [CLAWSEC] ClawSec 2.0 plugin registered
+
+# 5. Verify all 6 skills loaded (no "Skipping skill path" in log)
+grep -i 'skill' ~/.openclaw/logs/openclaw-$(date +%Y-%m-%d).log | grep -i clawsec
+
+# 6. Run first scan
+curl http://127.0.0.1:3001/api/scan | python3 -m json.tool
 ```
+
+---
+
+## Dashboard (React)
+
+```bash
+cd ~/.openclaw/workspace/clawsec
+
+# Install dependencies and build
+npm install --prefix src/
+npm run build --prefix src/
+
+# Serve
+npx serve -s src/dist -l 8081
+# Dashboard: http://localhost:8081
+```
+
+For development (live-reload + API proxy):
+```bash
+npm run dev --prefix src/
+```
+
+---
+
+## Installed File Layout
+
+```
+~/.openclaw/
+├── workspace/
+│   └── clawsec/                        ← ClawSec runtime root (COPY from repo)
+│       ├── openclaw.plugin.json
+│       ├── src/
+│       │   ├── coordinator.ts          ← OpenClaw plugin + coordinator logic
+│       │   ├── clawsec-ops-center.jsx  ← Dashboard React component
+│       │   ├── main.jsx                ← Vite entry point
+│       │   ├── index.html              ← Vite HTML template
+│       │   ├── package.json            ← npm build config
+│       │   └── vite.config.js
+│       ├── scripts/
+│       │   ├── scan-environment.sh     ← Unified 5-domain scanner
+│       │   ├── server.py               ← HTTP backend (127.0.0.1:3001)
+│       │   ├── scan/
+│       │   │   ├── scan-env.sh
+│       │   │   ├── scan-perm.sh
+│       │   │   ├── scan-net.sh
+│       │   │   ├── scan-session.sh
+│       │   │   └── scan-config.sh
+│       │   └── remediation/
+│       │       ├── env_gitignore.sh
+│       │       ├── precommit_hook.sh
+│       │       ├── breach_notification_procedure.sh
+│       │       └── runtime_package_install.sh
+│       ├── skills/
+│       │   ├── clawsec-coordinator/SKILL.md   ← canonical
+│       │   ├── clawsec-env/SKILL.md           ← canonical (normalized)
+│       │   ├── clawsec-perm/SKILL.md          ← canonical
+│       │   ├── clawsec-net/SKILL.md           ← canonical
+│       │   ├── clawsec-session/SKILL.md       ← canonical
+│       │   ├── clawsec-config/SKILL.md        ← canonical
+│       │   └── agents/                        ← legacy source layout (backup)
+│       ├── reports/                           ← gitignored, chmod 700
+│       └── docker/
+│
+├── skills/
+│   ├── clawsec-coordinator/SKILL.md    ← COPIED by install.sh
+│   ├── clawsec-env/SKILL.md            ← COPIED (NOT symlinked)
+│   ├── clawsec-perm/SKILL.md
+│   ├── clawsec-net/SKILL.md
+│   ├── clawsec-session/SKILL.md
+│   └── clawsec-config/SKILL.md
+│
+└── extensions/
+    └── clawsec/
+        ├── index.ts                    ← COPIED from src/coordinator.ts
+        ├── openclaw.plugin.json        ← COPIED
+        └── tsconfig.json              ← COPIED (CommonJS module resolution)
+```
+
+---
+
+## Troubleshooting
+
+### Skills not loading (`Skipping skill path that resolves outside its configured root`)
+This happens when skills are symlinks pointing outside `~/.openclaw/`.
+**Fix:** Re-run `bash install.sh` — it removes legacy symlinks and copies files.
+
+### Plugin not loaded (no `[CLAWSEC]` in logs)
+1. Check the extension was copied (not symlinked): `ls -la ~/.openclaw/extensions/clawsec/`
+2. Verify `openclaw.json` has plugin enabled: `grep -A3 '"clawsec"' ~/.openclaw/openclaw.json`
+3. Restart gateway: `openclaw gateway restart`
+
+### Port 3001 already in use
+```bash
+# Check who's using it:
+lsof -i :3001
+
+# Kill if it's a stale ClawSec process:
+lsof -ti:3001 | xargs kill -9
+
+# Start fresh:
+python3 ~/.openclaw/workspace/clawsec/scripts/server.py &
+```
+
+### Dashboard shows 404
+The dashboard needs to be built first:
+```bash
+npm install --prefix ~/.openclaw/workspace/clawsec/src/
+npm run build --prefix ~/.openclaw/workspace/clawsec/src/
+npx serve -s ~/.openclaw/workspace/clawsec/src/dist -l 8081
+```
+
+---
+
+## Re-install / Update
+
+```bash
+# Remove existing installation
+rm -rf ~/.openclaw/workspace/clawsec
+rm -rf ~/.openclaw/skills/clawsec-*
+rm -rf ~/.openclaw/extensions/clawsec
+
+# Re-run installer
+bash /path/to/clawsec-repo/install.sh
+```
+
+---
 
 ## Key Differences from v1.0
 
 | Aspect | v1.0 | v2.0 |
 |--------|------|------|
+| Installation | Symlinks (broken by realpath check) | **File copies** (OpenClaw-compatible) |
 | Architecture | Monolithic scanner | 5 isolated sub-agents |
 | Scan execution | Sequential | Parallel (all agents simultaneously) |
-| Agent role | Trigger only | Real orchestrator (Gateway) |
-| Scope isolation | None | Each agent has defined scope |
-| OpenClaw integration | Skill only | Skill + lifecycle-hook plugin |
+| Skills layout | `skills/agents/env-agent/` | `skills/clawsec-env/` (flat, canonical) |
+| Extension loading | Symlink → failed | Copy → works |
+| Port handling | Crash on conflict | Graceful detect + skip/error |
+| Unified scanner | Missing | `scripts/scan-environment.sh` |
+| Build system | None | Vite + React |
 | OWASP coverage | LLM10 + ASI | LLM10 + ASI + OpenClaw-specific |
 | Remediation | Manual + auto | Tiered (auto/approval/never) |
-| Heartbeat | Not implemented | Delta scan, alert on new findings only |
-| Changelog | None | Auto-append on every remediation |
-| SOUL.md protection | scan only | Active protection via before_tool_call hook |
