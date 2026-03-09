@@ -54,12 +54,16 @@ AGENT_SCRIPTS: dict[str, str] = {
 }
 
 # Remediation script allowlist (checkId → script path)
+# Tier 1 (auto): env_gitignore, precommit_hook, breach_notification_procedure, runtime_package_install
+# Tier 2 (approval): sessions_exposed, workspace_permissions
 REMEDIATION_ALLOWLIST: dict[str, str] = {
     "env_gitignore":                 "remediation/env_gitignore.sh",
     "precommit_hook":                "remediation/precommit_hook.sh",
     "breach_notification_procedure": "remediation/breach_notification_procedure.sh",
     "runtime_package_install":       "remediation/runtime_package_install.sh",
-    # soul_writable handled inline (chmod) — no script needed here
+    "sessions_exposed":              "remediation/sessions_exposed.sh",
+    "workspace_permissions":         "remediation/workspace_permissions.sh",
+    # soul_writable + constraints_writable handled inline (chmod) — no script needed here
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -323,6 +327,7 @@ if __name__ == "__main__":
 
     server = http.server.HTTPServer((HOST, PORT), ClawSecHandler)
     print(f"[CLAWSEC] Server v{VERSION} running on http://{HOST}:{PORT}")
+    print(f"[CLAWSEC] LAN access: {'ENABLED (OPENCLAW_HOST override)' if HOST != '127.0.0.1' else 'DISABLED (loopback only)'}")
     print(f"[CLAWSEC] Target directory: {TARGET_DIR}")
     print(f"[CLAWSEC] Reports directory: {REPORTS_DIR}")
     print(f"[CLAWSEC] Sub-agents: {', '.join(AGENT_SCRIPTS.keys())}")
