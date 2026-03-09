@@ -426,6 +426,42 @@ function register(api: {
   on: (event: string, handler: Function, opts?: object) => void;
   runtime: { paths: { workspace: string } };
 }) {
+  // ── Verify skill files are physical copies (not symlinks) ─────────────────
+  // OpenClaw's skill-loader calls realpath() on every SKILL.md. Symlinks that
+  // resolve outside the configured root (~/.openclaw/) are silently skipped.
+  // This check detects lingering symlinks from old installs and logs a fix command.
+  const skillsRoot = path.join(process.env.HOME || "", ".openclaw", "skills");
+  const clawsecSkills = [
+    "clawsec-coordinator",
+    "clawsec-env", "clawsec-perm", "clawsec-net",
+    "clawsec-session", "clawsec-config",
+  ];
+
+  let symlinkWarnings = 0;
+  for (const skillName of clawsecSkills) {
+    const skillPath = path.join(skillsRoot, skillName, "SKILL.md");
+    try {
+      const stat = fs.lstatSync(skillPath);
+      if (stat.isSymbolicLink()) {
+        symlinkWarnings++;
+        console.warn(
+          `[CLAWSEC] WARNING: ${skillName}/SKILL.md is a symlink — ` +
+          `OpenClaw may skip it. Fix: cp --remove-destination ` +
+          `"$(readlink -f ${skillPath})" "${skillPath}"`
+        );
+      }
+    } catch {
+      console.warn(`[CLAWSEC] Skill file not found: ${skillPath}`);
+    }
+  }
+
+  if (symlinkWarnings > 0) {
+    console.warn(
+      `[CLAWSEC] ${symlinkWarnings} skill symlink(s) detected. ` +
+      `Re-run install.sh to replace with physical copies.`
+    );
+  }
+
   console.log("[CLAWSEC] ClawSec 2.0 plugin registered");
 
   // Hook: intercept any tool call that tries to touch SOUL.md or CONSTRAINTS.md
