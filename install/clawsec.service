@@ -1,0 +1,39 @@
+[Unit]
+Description=ClawSec 2.0 Security Backend
+Documentation=https://github.com/4e696b6f/clawsec-agent
+After=network.target
+# Uncomment if OpenClaw runs as a systemd service:
+# After=openclaw.service
+
+[Service]
+Type=simple
+User=piko
+WorkingDirectory=/home/piko/.openclaw/workspace/clawsec
+ExecStart=/usr/bin/python3 /home/piko/.openclaw/workspace/clawsec/scripts/server.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clawsec
+
+# ── systemd security hardening ────────────────────────────────────────────────
+# Prevent privilege escalation
+NoNewPrivileges=yes
+# Private /tmp — isolated from other services
+PrivateTmp=yes
+# Filesystem protection — only explicit ReadWritePaths can be written
+ProtectSystem=strict
+# Reports dir must be writable; rest of openclaw is read-only
+ReadWritePaths=/home/piko/.openclaw/workspace/clawsec/reports
+ReadOnlyPaths=/home/piko/.openclaw
+# Home directory is read-only (scanner reads config, never writes outside reports)
+ProtectHome=read-only
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# These are overridden by install.sh with the real user's home path
+Environment=OPENCLAW_HOST=127.0.0.1
+Environment=OPENCLAW_PORT=3001
+Environment=OPENCLAW_TARGET_DIR=/home/piko/.openclaw
+
+[Install]
+WantedBy=multi-user.target

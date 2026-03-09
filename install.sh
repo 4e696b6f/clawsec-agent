@@ -384,6 +384,82 @@ else
   skip "npx not available or tsconfig.json missing — TypeScript check skipped"
 fi
 
+# ── Step 11: systemd Service (optional, recommended) ─────────────────────────
+
+step "Setting up systemd service..."
+
+SERVICE_TEMPLATE="${INSTALL_DIR}/install/clawsec.service"
+SERVICE_DEST="/etc/systemd/system/clawsec.service"
+
+if [[ ! -f "$SERVICE_TEMPLATE" ]]; then
+  skip "Service template not found: ${SERVICE_TEMPLATE}"
+elif ! command -v systemctl &>/dev/null; then
+  skip "systemctl not available — systemd service setup skipped"
+elif [[ "$EUID" -ne 0 ]] && ! sudo -n true 2>/dev/null; then
+  warn "No sudo access — systemd service not installed automatically"
+  warn "To install manually:"
+  warn "  sudo bash install.sh"
+  warn "  OR: sudo cp ${SERVICE_TEMPLATE} ${SERVICE_DEST} && sudo systemctl enable --now clawsec"
+else
+  REAL_USER="$(whoami)"
+  REAL_HOME="$(eval echo ~${REAL_USER})"
+
+  # Substitute placeholder user/paths with actual values (idempotent)
+  sed \
+    -e "s|User=piko|User=${REAL_USER}|g" \
+    -e "s|/home/piko|${REAL_HOME}|g" \
+    "$SERVICE_TEMPLATE" | sudo tee "$SERVICE_DEST" > /dev/null
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable clawsec.service
+  sudo systemctl start clawsec.service
+
+  sleep 2
+  if systemctl is-active --quiet clawsec.service; then
+    ok "clawsec.service running (auto-start on boot enabled)"
+  else
+    warn "clawsec.service not active — check: journalctl -u clawsec -n 20"
+  fi
+fi
+
+# ── Step 12: Post-install security advisory ───────────────────────────────────
+
+step "Post-install security advisory..."
+
+OPENCLAW_JSON_CHECK="${OPENCLAW_HOME}/openclaw.json"
+GATEWAY_BIND="unknown"
+if [[ -f "$OPENCLAW_JSON_CHECK" ]]; then
+  GATEWAY_BIND=$(python3 -c "
+import json
+try:
+    d = json.load(open('${OPENCLAW_JSON_CHECK}'))
+    print(d.get('gateway', {}).get('bind', 'unknown'))
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+fi
+
+echo ""
+echo "  ╔══════════════════════════════════════════════════════════╗"
+echo "  ║  Post-install security check results:                   ║"
+echo "  ╠══════════════════════════════════════════════════════════╣"
+
+if [[ "$GATEWAY_BIND" == "0.0.0.0" || "$GATEWAY_BIND" == "*" || "$GATEWAY_BIND" == "::" ]]; then
+  echo -e "  ║  ${RED}[CRITICAL]${NC} Gateway bound to ${GATEWAY_BIND} — LAN-exposed!         "
+  echo "  ║    Fix: edit openclaw.json → set gateway.bind: '127.0.0.1'  "
+  echo "  ║    Then: openclaw gateway restart                            "
+  echo "  ║    Note: Tier 'never' — requires manual operator decision    "
+elif [[ "$GATEWAY_BIND" == "unknown" ]]; then
+  echo "  ║  [?] Gateway binding: unknown (openclaw.json not found)      "
+else
+  echo -e "  ║  ${GREEN}[OK]${NC} Gateway binding: ${GATEWAY_BIND}                          "
+fi
+
+echo "  ╠══════════════════════════════════════════════════════════╣"
+echo "  ║  Run full scan: curl http://127.0.0.1:3001/api/scan      ║"
+echo "  ║  Dashboard:     http://localhost:8081                    ║"
+echo "  ╚══════════════════════════════════════════════════════════╝"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -393,7 +469,7 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo "  Next steps:"
 echo ""
-echo "  1. Start backend server:"
+echo "  1. Start backend server (if not using systemd):"
 echo "       python3 ${INSTALL_DIR}/scripts/server.py &"
 echo ""
 echo "  2. Verify health:"
