@@ -186,6 +186,109 @@ export const CUSTOM_CHECKS = [
     },
   },
 
+  // ── Network / Gateway ────────────────────────────────────────────────────
+
+  {
+    id: "gateway_exposed",
+    category: "Network",
+    label: "OpenClaw Gateway Binding",
+    description:
+      "The OpenClaw gateway is bound to 0.0.0.0, making the Control Plane reachable " +
+      "from any device on the local network without authentication. " +
+      "Binding to 127.0.0.1 restricts access to the local machine only. " +
+      "Safe for all channel connections (Telegram, WhatsApp, Slack) — they use external webhooks.",
+    severity: "critical",
+    phase: "runtime",
+    framework: "custom",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Apply via ClawSec API: POST /api/apply/gateway_exposed",
+        "Or manually: edit ~/.openclaw/openclaw.json → gateway.bind: '127.0.0.1'",
+        "Then restart: openclaw gateway restart",
+      ],
+      code: "# In ~/.openclaw/openclaw.json:\n{ \"gateway\": { \"bind\": \"127.0.0.1\" } }",
+      file: "~/.openclaw/openclaw.json",
+      tips: [
+        "Tier 'approval' — requires openclaw gateway restart after change",
+        "Channel connections reconnect automatically via external webhooks",
+      ],
+    },
+    validation: {
+      checklist: ["gateway.bind is 127.0.0.1 or localhost"],
+      script:
+        "python3 -c \"import json; d=json.load(open(open.__module__)); exit(0 if d.get('gateway',{}).get('bind','') in ['127.0.0.1','localhost','::1'] else 1)\" ~/.openclaw/openclaw.json",
+    },
+  },
+
+  // ── Session Isolation ─────────────────────────────────────────────────────
+
+  {
+    id: "session_isolation",
+    category: "Sandboxing",
+    label: "Session Storage Isolation",
+    description:
+      "All channel sessions (Telegram, WhatsApp, Slack, etc.) are stored flat in a single " +
+      "sessions/ directory without per-channel or per-user subdirectories. " +
+      "This violates ASI03 — a compromised agent could access sessions from other channels.",
+    severity: "medium",
+    phase: "runtime",
+    framework: "custom",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "Check: find ~/.openclaw/sessions -maxdepth 1 -name '*.jsonl' | wc -l",
+        "Isolated = subdirs per channel (e.g. sessions/telegram/, sessions/whatsapp/)",
+        "Note: Tier 'never' — session layout is an OpenClaw architecture decision",
+      ],
+      code: "# Advisory only — contact OpenClaw maintainers for per-channel isolation",
+      file: "~/.openclaw/sessions/",
+      tips: [
+        "This is advisory — ClawSec documents the finding, cannot auto-fix",
+      ],
+    },
+    validation: {
+      checklist: ["sessions/ contains per-channel subdirectories"],
+      script:
+        "find ~/.openclaw/sessions -mindepth 1 -maxdepth 1 -type d | grep -q .",
+    },
+  },
+
+  // ── Inter-Agent Auth ──────────────────────────────────────────────────────
+
+  {
+    id: "inter_agent_auth",
+    category: "Authentication",
+    label: "Inter-Agent HTTP Authentication",
+    description:
+      "ClawSec's HTTP backend must require authentication for mutating endpoints " +
+      "(/api/apply/) to prevent unauthorized local processes from triggering remediations. " +
+      "Without a shared secret token, any local process can apply arbitrary remediations.",
+    severity: "medium",
+    phase: "runtime",
+    framework: "custom",
+    stage: "runtime",
+    guide: {
+      steps: [
+        "ClawSec 2.0 auto-generates a token on server start at .clawsec_token (chmod 600)",
+        "All POST /api/apply/ calls require: X-ClawSec-Token: <token>",
+        "Read token: cat ~/.openclaw/workspace/clawsec/.clawsec_token",
+        "Resolved automatically when running server.py v2.0+",
+      ],
+      code: "curl -X POST http://127.0.0.1:3001/api/apply/precommit_hook \\\n  -H \"X-ClawSec-Token: $(cat ~/.openclaw/workspace/clawsec/.clawsec_token)\"",
+      file: "~/.openclaw/workspace/clawsec/.clawsec_token",
+      tips: [
+        "Token stored at chmod 600 — only readable by the server process owner",
+        "GET endpoints (health, scan, reports) remain open — read-only, no risk",
+      ],
+    },
+    validation: {
+      checklist: [".clawsec_token exists with 600 permissions"],
+      script:
+        "test -f ~/.openclaw/workspace/clawsec/.clawsec_token && stat -c '%a' ~/.openclaw/workspace/clawsec/.clawsec_token | grep -q '^600$'",
+    },
+  },
+
   // ── CI / Runtime ─────────────────────────────────────────────────────────
 
   {

@@ -448,7 +448,7 @@ if [[ "$GATEWAY_BIND" == "0.0.0.0" || "$GATEWAY_BIND" == "*" || "$GATEWAY_BIND" 
   echo -e "  ║  ${RED}[CRITICAL]${NC} Gateway bound to ${GATEWAY_BIND} — LAN-exposed!         "
   echo "  ║    Fix: edit openclaw.json → set gateway.bind: '127.0.0.1'  "
   echo "  ║    Then: openclaw gateway restart                            "
-  echo "  ║    Note: Tier 'never' — requires manual operator decision    "
+  echo "  ║    Note: Tier 'approval' — run via ClawSec API or manually   "
 elif [[ "$GATEWAY_BIND" == "unknown" ]]; then
   echo "  ║  [?] Gateway binding: unknown (openclaw.json not found)      "
 else
