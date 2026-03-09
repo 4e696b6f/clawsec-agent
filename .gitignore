@@ -42,7 +42,9 @@ htmlcov/
 
 #Claude
 .claude
-CLAUDE.MD 
+CLAUDE.MD
+CHANGELOG.md
+
 
 
 
