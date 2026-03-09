@@ -1,0 +1,41 @@
+# ClawSec 2.0 — .gitignore
+
+# Scan reports — may contain sensitive file paths and permission data
+reports/
+reports/*.json
+
+# Runtime artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Node / React
+node_modules/
+dist/
+build/
+.parcel-cache/
+
+# Local environment (never commit credentials)
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage

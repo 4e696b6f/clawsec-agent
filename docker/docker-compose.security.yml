@@ -1,0 +1,78 @@
+# docker-compose.security.yml — ClawSec 2.0 Security-Hardened Deployment
+# Runs the ClawSec backend server in an isolated, read-only container.
+# Port binds only to 127.0.0.1 — not accessible from LAN even inside Docker.
+
+name: clawsec
+
+services:
+  clawsec-server:
+    image: python:3.11-slim
+    container_name: clawsec-backend
+    restart: unless-stopped
+    command: python3 /app/scripts/server.py
+
+    volumes:
+      # ClawSec project root — read-only (scripts cannot be modified at runtime)
+      - "${CLAWSEC_ROOT:-.}:/app:ro"
+      # OpenClaw home — read-only (scanner cannot alter target)
+      - "${OPENCLAW_HOME:-~/.openclaw}:/openclaw:ro"
+      # Reports directory — writable (output only)
+      - "${CLAWSEC_ROOT:-.}/reports:/app/reports:rw"
+
+    environment:
+      - OPENCLAW_HOST=127.0.0.1
+      - OPENCLAW_PORT=3001
+      - OPENCLAW_TARGET_DIR=/openclaw
+      - CLAWSEC_ROOT=/app
+
+    ports:
+      # Bind ONLY to loopback — never expose to LAN
+      - "127.0.0.1:3001:3001"
+
+    networks:
+      - clawsec-internal
+
+    security_opt:
+      # Apply custom seccomp profile blocking dangerous syscalls
+      - seccomp:./seccomp-agent.json
+      # Prevent privilege escalation (no setuid, no sudo)
+      - no-new-privileges:true
+
+    # Immutable container filesystem
+    read_only: true
+
+    # Writable /tmp for Python stdlib (limited size)
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+    # Drop all Linux capabilities by default
+    cap_drop:
+      - ALL
+
+    # Only restore what Python/networking needs
+    cap_add:
+      - NET_BIND_SERVICE
+
+    # Resource limits — prevent runaway scans from consuming host resources
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  clawsec-internal:
+    driver: bridge
+    # internal: true prevents all external internet access from container
+    internal: true

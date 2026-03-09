@@ -1,0 +1,49 @@
+{
+  "id": "clawsec",
+  "name": "ClawSec 2.0",
+  "version": "2.0.0",
+  "description": "Multi-agent security scanner for OpenClaw. Orchestrates ENV, PERMISSION, NETWORK, SESSION, and CONFIG sub-agents. Auto-applies safe remediations, routes approvals via Telegram.",
+  "kind": "extension",
+  "entry": "src/coordinator.ts",
+  "author": "clawsec",
+  "hooks": [
+    "before_tool_call",
+    "session_start"
+  ],
+  "requiredSkills": [
+    "clawsec-coordinator",
+    "clawsec-env",
+    "clawsec-perm",
+    "clawsec-net",
+    "clawsec-session",
+    "clawsec-config"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "reportDir": {
+        "type": "string",
+        "description": "Path to store scan reports",
+        "default": "~/.openclaw/workspace/clawsec/reports"
+      },
+      "alertThreshold": {
+        "type": "number",
+        "description": "Risk score threshold for Telegram alerts",
+        "default": 50,
+        "minimum": 0,
+        "maximum": 100
+      },
+      "heartbeatIntervalSeconds": {
+        "type": "number",
+        "description": "Seconds between heartbeat light scans",
+        "default": 3600
+      },
+      "skipAutoFix": {
+        "type": "boolean",
+        "description": "Disable all auto-remediations (report only)",
+        "default": false
+      }
+    },
+    "additionalProperties": false
+  }
+}
