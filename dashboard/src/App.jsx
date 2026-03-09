@@ -1,11 +1,28 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   fetchScan, fetchLastReport, fetchHeartbeat,
-  applyRemediation, fetchReportHistory, saveConfig,
-  computeScore, loadHistory, saveHistory,
+  applyRemediation, computeScore, loadHistory, saveHistory,
 } from "./api.js";
 
-// ─── Default state (before first API response) ────────────────────────────────
+// ─── Persistent storage helpers ───────────────────────────────────────────────
+const CONFIG_KEY = "clawsec_config";
+const TOKEN_KEY  = "clawsec_token";
+
+const loadLocalConfig = (defaults) => {
+  try { return { ...defaults, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}") }; }
+  catch { return defaults; }
+};
+const saveLocalConfig = (c) => {
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
+};
+const loadToken = () => {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+};
+const saveToken = (t) => {
+  try { localStorage.setItem(TOKEN_KEY, t); } catch {}
+};
+
+// ─── Default state ────────────────────────────────────────────────────────────
 const defaultScanResult = {
   scanned_at:         null,
   supervisor_version: "2.0.0",
@@ -33,7 +50,7 @@ const defaultHeartbeat = {
   uptime_seconds:       0,
 };
 
-// ─── Color System ─────────────────────────────────────────────────────────────
+// ─── Color system ──────────────────────────────────────────────────────────────
 const SEV = {
   critical: { bg: "#ff2d2d22", border: "#ff2d2d", text: "#ff6b6b", glow: "#ff2d2d" },
   high:     { bg: "#ff8c0022", border: "#ff8c00", text: "#ffb347", glow: "#ff8c00" },
@@ -43,7 +60,7 @@ const SEV = {
   ok:       { bg: "#00ff8822", border: "#00ff88", text: "#6bffb8", glow: "#00ff88" },
 };
 
-// ─── Subcomponents ────────────────────────────────────────────────────────────
+// ─── Subcomponents ─────────────────────────────────────────────────────────────
 
 const GlowDot = ({ color, pulse }) => (
   <span style={{
@@ -97,7 +114,7 @@ const DomainCard = ({ name, data, findings }) => {
   return (
     <div style={{
       background: c.bg, border: `1px solid ${c.border}44`, borderRadius: 8,
-      padding: "12px 14px", cursor: "default",
+      padding: "12px 14px",
       boxShadow: ok ? `inset 0 0 20px ${c.glow}08` : `inset 0 0 20px ${c.glow}12`,
       transition: "all 0.4s ease",
     }}>
@@ -107,66 +124,76 @@ const DomainCard = ({ name, data, findings }) => {
         <GlowDot color={c.glow} pulse={!ok} />
       </div>
       <div style={{ color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-        {data.scanned ? `${data.duration_ms}ms` : "not scanned"} · {domFindings.length} finding{domFindings.length !== 1 ? "s" : ""}
+        {data.duration_ms > 0 ? `${data.duration_ms}ms · ` : ""}{domFindings.length} finding{domFindings.length !== 1 ? "s" : ""}
       </div>
     </div>
   );
 };
 
-const FindingRow = ({ finding, onFix }) => {
+const FindingRow = ({ finding, onFix, fixed }) => {
   const c = SEV[finding.severity] || SEV.info;
   return (
     <div style={{
-      background: c.bg, border: `1px solid ${c.border}33`,
-      borderLeft: `3px solid ${c.border}`,
+      background: fixed ? "#0a1a0a" : c.bg,
+      border: `1px solid ${fixed ? "#00ff8833" : c.border + "33"}`,
+      borderLeft: `3px solid ${fixed ? "#00ff88" : c.border}`,
       borderRadius: "0 6px 6px 0", padding: "10px 14px",
       marginBottom: 6, display: "flex", alignItems: "flex-start", gap: 12,
+      opacity: fixed ? 0.5 : 1, transition: "all 0.4s ease",
     }}>
       <div style={{ flexShrink: 0, paddingTop: 2 }}>
-        <GlowDot color={c.glow} pulse={finding.severity === "critical"} />
+        {fixed
+          ? <span style={{ color: "#00ff88", fontSize: 12 }}>✓</span>
+          : <GlowDot color={c.glow} pulse={finding.severity === "critical"} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
-          <span style={{
-            background: c.border + "33", color: c.text, border: `1px solid ${c.border}66`,
-            borderRadius: 3, padding: "1px 7px",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, textTransform: "uppercase",
-          }}>{finding.severity}</span>
+          {!fixed && (
+            <span style={{
+              background: c.border + "33", color: c.text, border: `1px solid ${c.border}66`,
+              borderRadius: 3, padding: "1px 7px",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, textTransform: "uppercase",
+            }}>{finding.severity}</span>
+          )}
+          {fixed && <span style={{ color: "#00ff88", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>RESOLVED</span>}
           <span style={{ color: "#777", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.id}</span>
+          <span style={{ color: "#445", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.agent}</span>
           {finding.owasp_llm && <span style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.owasp_llm}</span>}
-          {finding.owasp_asi && <span style={{ color: "#445", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.owasp_asi}</span>}
+          {finding.owasp_asi && <span style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.owasp_asi}</span>}
         </div>
         <div style={{ color: "#d4d4d4", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, marginBottom: 4 }}>{finding.message}</div>
         <div style={{ color: "#666", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>{finding.recommendation}</div>
       </div>
-      <div style={{ flexShrink: 0 }}>
-        {finding.remediation_tier === "auto" && (
-          <button onClick={() => onFix(finding)} style={{
-            background: "#00ff8822", border: "1px solid #00ff8866", color: "#00ff88",
-            borderRadius: 4, padding: "4px 10px",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
-          }}>AUTO FIX</button>
-        )}
-        {finding.remediation_tier === "approval" && (
-          <button onClick={() => onFix(finding)} style={{
-            background: "#ffd70022", border: "1px solid #ffd70066", color: "#ffd700",
-            borderRadius: 4, padding: "4px 10px",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
-          }}>APPROVE</button>
-        )}
-        {finding.remediation_tier === "never" && (
-          <span style={{ color: "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>MANUAL</span>
-        )}
-      </div>
+      {!fixed && (
+        <div style={{ flexShrink: 0 }}>
+          {finding.remediation_tier === "auto" && (
+            <button onClick={() => onFix(finding)} style={{
+              background: "#00ff8822", border: "1px solid #00ff8866", color: "#00ff88",
+              borderRadius: 4, padding: "4px 10px",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
+            }}>AUTO FIX</button>
+          )}
+          {finding.remediation_tier === "approval" && (
+            <button onClick={() => onFix(finding)} style={{
+              background: "#ffd70022", border: "1px solid #ffd70066", color: "#ffd700",
+              borderRadius: 4, padding: "4px 10px",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
+            }}>APPROVE</button>
+          )}
+          {finding.remediation_tier === "never" && (
+            <span style={{ color: "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>MANUAL</span>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
-const AgentStatusBar = ({ heartbeat }) => {
+const AgentStatusBar = ({ heartbeat, apiConnected }) => {
   const isActive = heartbeat.status === "active";
   const c = isActive ? SEV.ok : SEV.high;
-  const upHours = Math.floor((heartbeat.uptime_seconds || 0) / 3600);
-  const upMins = Math.floor(((heartbeat.uptime_seconds || 0) % 3600) / 60);
+  const upHours = Math.floor(heartbeat.uptime_seconds / 3600);
+  const upMins = Math.floor((heartbeat.uptime_seconds % 3600) / 60);
   return (
     <div style={{
       background: "#0a0a16", border: `1px solid ${c.border}44`,
@@ -188,10 +215,10 @@ const AgentStatusBar = ({ heartbeat }) => {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
         {[
-          { label: "SKILL", value: (heartbeat.current_skill || "—").toUpperCase() },
-          { label: "TOOLS/5m", value: heartbeat.tool_calls_last_5min ?? "—" },
-          { label: "MEM", value: heartbeat.memory_used_mb ? heartbeat.memory_used_mb + "MB" : "—" },
-          { label: "UPTIME", value: `${upHours}h ${upMins}m` },
+          { label: "SKILL",    value: (heartbeat.current_skill || "—").toUpperCase() },
+          { label: "TOOLS/5m", value: heartbeat.tool_calls_last_5min },
+          { label: "MEM",      value: heartbeat.memory_used_mb > 0 ? heartbeat.memory_used_mb + "MB" : "—" },
+          { label: "UPTIME",   value: heartbeat.uptime_seconds > 0 ? `${upHours}h ${upMins}m` : "—" },
         ].map(({ label, value }) => (
           <div key={label} style={{ textAlign: "center" }}>
             <div style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>{label}</div>
@@ -200,9 +227,9 @@ const AgentStatusBar = ({ heartbeat }) => {
         ))}
       </div>
       <div style={{ textAlign: "right" }}>
-        <div style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>LAST PING</div>
-        <div style={{ color: "#667", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-          {new Date(heartbeat.last_ping).toLocaleTimeString("de-DE")}
+        <div style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>API</div>
+        <div style={{ color: apiConnected ? "#00ff88" : "#ff2d2d", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
+          {apiConnected ? "LIVE" : "OFFLINE"}
         </div>
       </div>
     </div>
@@ -244,7 +271,11 @@ const ChangelogViewer = ({ entries }) => {
 const ScoreHistoryChart = ({ history }) => {
   const w = 320, h = 80, pad = 10;
   const max = 100, min = 0;
-  if (history.length < 2) return null;
+  if (history.length < 2) return (
+    <div style={{ width: w, height: h, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>No history yet</span>
+    </div>
+  );
   const pts = history.map((v, i) => {
     const x = pad + (i / (history.length - 1)) * (w - pad * 2);
     const y = h - pad - ((v - min) / (max - min)) * (h - pad * 2);
@@ -271,50 +302,10 @@ const ScoreHistoryChart = ({ history }) => {
   );
 };
 
-const BaselineTable = ({ baseline }) => {
-  const entries = Object.entries(baseline);
-  const riskColor = { LOW: "#00ff88", MEDIUM: "#ffd700", HIGH: "#ff8c00", CRITICAL: "#ff2d2d" };
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}>
-        <thead>
-          <tr>
-            {["COMPONENT", "TYPE", "CAPABILITIES", "RISK", "APPROVED BY", "VERIFIED"].map(h => (
-              <th key={h} style={{
-                textAlign: "left", padding: "6px 10px", color: "#555",
-                borderBottom: "1px solid #1a1a2e", fontSize: 9, letterSpacing: 1,
-              }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map(([name, entry]) => (
-            <tr key={name} style={{ borderBottom: "1px solid #0f0f1e" }}>
-              <td style={{ padding: "8px 10px", color: "#9aafcc" }}>{name}</td>
-              <td style={{ padding: "8px 10px", color: "#667788" }}>{entry.type}</td>
-              <td style={{ padding: "8px 10px", color: "#556677", fontSize: 10 }}>
-                {(entry.capabilities || [entry.permissions || "—"]).join(", ")}
-              </td>
-              <td style={{ padding: "8px 10px" }}>
-                <span style={{ color: riskColor[entry.risk_level] || "#888", fontWeight: 700 }}>
-                  {entry.risk_level}
-                </span>
-              </td>
-              <td style={{ padding: "8px 10px", color: "#556677" }}>{entry.approved_by}</td>
-              <td style={{ padding: "8px 10px", color: "#445566", fontSize: 10 }}>
-                {entry.last_verified ? new Date(entry.last_verified).toLocaleTimeString("de-DE") : "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-const ConfigEditor = ({ title, content, onSave }) => {
+const ConfigEditor = ({ title, content, onSave, readOnly }) => {
   const [val, setVal] = useState(content);
   const [saved, setSaved] = useState(false);
+  useEffect(() => { setVal(content); }, [content]);
   const handleSave = () => {
     onSave(val);
     setSaved(true);
@@ -324,24 +315,29 @@ const ConfigEditor = ({ title, content, onSave }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1 }}>{title}</span>
-        <button onClick={handleSave} style={{
-          background: saved ? "#00ff8822" : "#0a1628",
-          border: `1px solid ${saved ? "#00ff88" : "#2a3f5f"}`,
-          color: saved ? "#00ff88" : "#7c9fcc",
-          borderRadius: 4, padding: "4px 12px",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer",
-          letterSpacing: 1, transition: "all 0.3s",
-        }}>{saved ? "✓ SAVED" : "SAVE"}</button>
+        {!readOnly && (
+          <button onClick={handleSave} style={{
+            background: saved ? "#00ff8822" : "#0a1628",
+            border: `1px solid ${saved ? "#00ff88" : "#2a3f5f"}`,
+            color: saved ? "#00ff88" : "#7c9fcc",
+            borderRadius: 4, padding: "4px 12px",
+            fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer",
+            letterSpacing: 1, transition: "all 0.3s",
+          }}>{saved ? "✓ SAVED" : "SAVE"}</button>
+        )}
+        {readOnly && <span style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>READ-ONLY (chmod 444)</span>}
       </div>
       <textarea
         value={val}
-        onChange={(e) => setVal(e.target.value)}
+        onChange={(e) => !readOnly && setVal(e.target.value)}
+        readOnly={readOnly}
         style={{
-          width: "100%", height: 180, background: "#050510",
+          width: "100%", height: 180, background: readOnly ? "#030308" : "#050510",
           border: "1px solid #1a1a2e", borderRadius: 6,
-          color: "#8899aa", fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+          color: readOnly ? "#445566" : "#8899aa",
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
           padding: 12, resize: "vertical", outline: "none", boxSizing: "border-box",
-          lineHeight: 1.7,
+          lineHeight: 1.7, cursor: readOnly ? "default" : "text",
         }}
       />
     </div>
@@ -374,49 +370,35 @@ const ScanTriggerButton = ({ scanning, onClick }) => (
     transition: "all 0.3s",
     display: "flex", alignItems: "center", gap: 8,
   }}>
-    {scanning ? (
-      <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>◌</span> SCANNING...</>
-    ) : (
-      <><span>▶</span> RUN SCAN</>
-    )}
+    {scanning
+      ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>◌</span> SCANNING...</>
+      : <><span>▶</span> RUN SCAN</>}
   </button>
 );
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
+// ─── Main Dashboard ────────────────────────────────────────────────────────────
 export default function ClawSecDashboard() {
-  const [tick, setTick]               = useState(0);
-  const [scanResult, setScanResult]   = useState(defaultScanResult);
-  const [heartbeat, setHeartbeat]     = useState(defaultHeartbeat);
-  const [changelog, setChangelog]     = useState([
-    `## [${new Date().toISOString()}] DASHBOARD_INIT\nseverity: info\ndomain: config\ndetail: ClawSec Operations Center loaded\naction_taken: awaiting_scan\n---`
+  const [scanResult, setScanResult]     = useState(defaultScanResult);
+  const [heartbeat, setHeartbeat]       = useState(defaultHeartbeat);
+  const [changelog, setChangelog]       = useState([
+    `## [${new Date().toISOString()}] SUPERVISOR_INIT\nseverity: info\ndomain: all\ndetail: ClawSec Dashboard v3 started. Connecting to backend...\naction_taken: awaiting_scan\n---`,
   ]);
-  const [scoreHistory, setScoreHistory] = useState(() => {
-    const stored = loadHistory();
-    return stored.length > 0 ? stored.map(h => h.risk_score || 0) : [0];
-  });
-  const [scanning, setScanning]       = useState(false);
-  const [tab, setTab]                 = useState("overview");
-  const [fixedIds, setFixedIds]       = useState(new Set());
+  const [scoreHistory, setScoreHistory] = useState(() => loadHistory());
+  const [scanning, setScanning]         = useState(false);
+  const [tab, setTab]                   = useState("overview");
+  const [fixedIds, setFixedIds]         = useState(new Set());
   const [notifications, setNotifications] = useState([]);
-  const [paused, setPaused]           = useState(false);
+  const [paused, setPaused]             = useState(false);
   const [apiConnected, setApiConnected] = useState(false);
-  const [apiError, setApiError]       = useState(null);
-  const [baseline] = useState({
-    "SOUL.md":             { type: "file", permissions: "444", risk_level: "CRITICAL", approved_by: "user", last_verified: new Date().toISOString() },
-    "CONSTRAINTS.md":      { type: "file", permissions: "444", risk_level: "CRITICAL", approved_by: "user", last_verified: new Date().toISOString() },
-    "clawsec-coordinator": { type: "skill", capabilities: ["exec", "read", "write"], risk_level: "MEDIUM", approved_by: "auto", last_verified: new Date().toISOString() },
-    "clawsec-env":         { type: "skill", capabilities: ["exec", "read"], risk_level: "LOW", approved_by: "auto", last_verified: new Date().toISOString() },
-    "clawsec-net":         { type: "skill", capabilities: ["exec", "read"], risk_level: "LOW", approved_by: "auto", last_verified: new Date().toISOString() },
-    "clawsec-session":     { type: "skill", capabilities: ["exec", "read"], risk_level: "LOW", approved_by: "auto", last_verified: new Date().toISOString() },
-    "clawsec-config":      { type: "skill", capabilities: ["exec", "read"], risk_level: "LOW", approved_by: "auto", last_verified: new Date().toISOString() },
-    "gmail-plugin":        { type: "plugin", capabilities: ["gmail_read", "gmail_send"], risk_level: "HIGH", approved_by: "user", last_verified: new Date().toISOString() },
-  });
+  const [apiError, setApiError]         = useState(null);
+  const [clawsecToken, setClawsecToken] = useState(() => loadToken());
 
-  const [configs, setConfigs] = useState({
-    soul:        "# SOUL.md — Agent Identity\n(loading from server...)",
-    constraints: "# CONSTRAINTS.md — Hard Limits\n(loading from server...)",
-    gateway:     "# GATEWAY.md — Routing Rules\n(loading from server...)",
-  });
+  const configDefaults = {
+    soul: "# SOUL.md — Agent Identity\nName: Kairos\nPurpose: Gateway Coordinator & Personal AI\n\nCore Values:\n- Transparency über alle Aktionen\n- Minimale Rechte (least privilege)\n- Audit vor Aktion",
+    constraints: "# CONSTRAINTS.md — Hard Limits\n\n## NEVER\n- SOUL.md überschreiben oder löschen\n- CONSTRAINTS.md modifizieren\n- Credentials in CHANGELOG oder Telegram schreiben\n- Remediationen ohne Supervisor-Approval ausführen",
+    gateway: "# GATEWAY.md — Routing & Auth\n\n## Allowed Requestors\n- User (authenticated via session token)\n- ClawSec Supervisor (internal, priority 200)\n\n## Blocked Patterns\n- \"ignore previous\"\n- \"new instructions\"",
+  };
+  const [configs, setConfigs] = useState(() => loadLocalConfig(configDefaults));
 
   const addNotification = useCallback((msg, type = "info") => {
     const id = Date.now();
@@ -424,158 +406,146 @@ export default function ClawSecDashboard() {
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
   }, []);
 
-  // ── Mount: load last report + history from server ─────────────────────────
-  useEffect(() => {
-    fetchLastReport().then(data => {
-      if (data) {
-        setScanResult(data);
-        setScoreHistory(h => [...h, data.risk_score]);
-        setApiConnected(true);
-        addNotification("Last report loaded from server", "info");
-        setChangelog(prev => [...prev,
-          `## [${new Date().toISOString()}] REPORT_LOADED\nseverity: info\ndomain: all\ndetail: Last scan loaded. Score: ${data.risk_score}/100. ${data.findings.length} finding(s).\naction_taken: state_restored\n---`
-        ]);
-      }
-    }).catch(err => {
-      setApiError("Backend nicht erreichbar: " + err.message);
-      setApiConnected(false);
-    });
+  const applyNormalizedScan = useCallback((raw) => {
+    if (!raw) return;
+    // Flatten agent_results → findings with .agent and .domain
+    const AGENT_DOMAIN = {
+      "clawsec-env":     "credentials",
+      "clawsec-perm":    "identity",
+      "clawsec-net":     "network",
+      "clawsec-session": "sessions",
+      "clawsec-config":  "config",
+    };
+    const findings = [];
+    const domains  = { identity: { ok: true, duration_ms: 0, scanned: false }, credentials: { ok: true, duration_ms: 0, scanned: false }, network: { ok: true, duration_ms: 0, scanned: false }, sessions: { ok: true, duration_ms: 0, scanned: false }, config: { ok: true, duration_ms: 0, scanned: false } };
 
-    // Load scan history to populate score graph
-    fetchReportHistory(20).then(reports => {
-      if (reports.length > 0) {
-        const history = reports.map(r => ({ timestamp: r.scanned_at, risk_score: r.risk_score }));
-        saveHistory(history);
-        setScoreHistory(history.map(h => h.risk_score));
+    for (const [agentName, agentResult] of Object.entries(raw.agent_results || {})) {
+      const domain = AGENT_DOMAIN[agentName] || "config";
+      const dur    = agentResult.scan_duration_ms || 0;
+      domains[domain] = { scanned: true, duration_ms: dur, ok: (agentResult.findings || []).length === 0 };
+      for (const f of agentResult.findings || []) {
+        findings.push({ ...f, agent: agentName, domain, owasp_llm: f.owasp_llm === "null" ? null : f.owasp_llm, owasp_asi: f.owasp_asi === "null" ? null : f.owasp_asi });
       }
-    }).catch(() => { /* history unavailable — fine */ });
+    }
+
+    const applied   = findings.filter(f => f.status === "auto_fixed").map(f => f.id);
+    const pending   = findings.filter(f => f.status === "pending_approval").map(f => f.id);
+    const score     = computeScore(findings.filter(f => f.status !== "auto_fixed"));
+
+    setScanResult({
+      scanned_at:         raw.timestamp || new Date().toISOString(),
+      supervisor_version: raw.version || "2.0.0",
+      system_hash:        raw.system_hash || "--------",
+      risk_score:         score,
+      findings,
+      domains,
+      applied_fixes:    applied,
+      pending_approval: pending,
+    });
+    return { score, findings };
+  }, []);
+
+  // ── Mount: load last report + heartbeat ───────────────────────────────────
+  useEffect(() => {
+    fetchLastReport()
+      .then(raw => {
+        if (raw) {
+          const result = applyNormalizedScan(raw);
+          if (result) {
+            setApiConnected(true);
+            setApiError(null);
+            const newHistory = [...scoreHistory, result.score].slice(-50);
+            setScoreHistory(newHistory);
+            saveHistory(newHistory);
+            setChangelog(prev => [...prev, `## [${new Date().toISOString()}] LAST_REPORT_LOADED\nseverity: info\ndomain: all\ndetail: Loaded last scan. Score: ${result.score}/100. ${result.findings.length} finding(s).\naction_taken: report_applied\n---`]);
+          }
+        }
+      })
+      .catch(() => {
+        setApiError("Backend nicht erreichbar — starte: python3 scripts/server.py");
+      });
+
+    fetchHeartbeat()
+      .then(hb => { if (hb) { setHeartbeat(hb); setApiConnected(true); setApiError(null); } })
+      .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Heartbeat polling every 15s ────────────────────────────────────────────
+  // ── Heartbeat polling every 15s ───────────────────────────────────────────
   useEffect(() => {
     if (paused) return;
-    const iv = setInterval(async () => {
-      setTick(t => t + 1);
-      const hb = await fetchHeartbeat();
-      if (hb) {
-        setHeartbeat(hb);
-        setApiConnected(true);
-        if (apiError) setApiError(null);
-      } else {
-        setApiConnected(false);
-      }
-    }, 15_000);
-    return () => clearInterval(iv);
-  }, [paused, apiError]);
+    const id = setInterval(() => {
+      fetchHeartbeat()
+        .then(hb => { if (hb) { setHeartbeat(hb); setApiConnected(true); setApiError(null); } })
+        .catch(() => { setApiConnected(false); });
+    }, 15000);
+    return () => clearInterval(id);
+  }, [paused]);
 
   // ── Manual scan ───────────────────────────────────────────────────────────
   const handleManualScan = useCallback(async () => {
     setScanning(true);
-    setApiError(null);
-    addNotification("Scan triggered — calling /api/scan...", "info");
+    addNotification("Scan gestartet — POST /api/scan...", "info");
     try {
-      const data = await fetchScan();
-      setScanResult(data);
-      setApiConnected(true);
-      setFixedIds(new Set()); // Clear local dismissals — fresh scan result
-
-      const newScore = data.risk_score;
-      setScoreHistory(h => {
-        const updated = [...h.slice(-29), newScore];
-        const histEntries = updated.map(s => ({ timestamp: new Date().toISOString(), risk_score: s }));
-        saveHistory(histEntries);
-        return updated;
-      });
-
-      setChangelog(prev => [...prev.slice(-19),
-        `## [${data.scanned_at || new Date().toISOString()}] SCAN_COMPLETE\nseverity: info\ndomain: all\ndetail: Real scan finished. Score: ${newScore}/100. ${data.findings.length} finding(s). Auto-fixed: ${data.applied_fixes.length}.\naction_taken: report_saved\n---`
-      ]);
-      addNotification(`Scan complete. Score: ${newScore}/100 · ${data.findings.length} finding(s)`, "info");
-
-      // Alert on critical findings
-      const crits = data.findings.filter(f => f.severity === "critical" && f.status !== "auto_fixed");
-      if (crits.length > 0) {
-        addNotification(`⚠ ${crits.length} critical finding(s): ${crits.map(f => f.id).join(", ")}`, "critical");
+      const raw = await fetchScan();
+      const result = applyNormalizedScan(raw);
+      if (result) {
+        setApiConnected(true);
+        setApiError(null);
+        const newHistory = [...scoreHistory, result.score].slice(-50);
+        setScoreHistory(newHistory);
+        saveHistory(newHistory);
+        setFixedIds(new Set()); // reset local fixes on new scan
+        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] MANUAL_SCAN\nseverity: info\ndomain: all\ndetail: Scan complete. Score: ${result.score}/100. ${result.findings.length} finding(s).\naction_taken: report_saved\n---`]);
+        addNotification(`Scan abgeschlossen. Score: ${result.score}/100 · ${result.findings.length} Findings`, result.score > 50 ? "critical" : result.score > 20 ? "warning" : "ok");
+        if (result.findings.some(f => f.severity === "critical")) {
+          addNotification(`⚠ Critical: ${result.findings.find(f => f.severity === "critical")?.id}`, "critical");
+        }
       }
     } catch (err) {
-      setApiError("Scan failed: " + err.message);
       setApiConnected(false);
-      addNotification("Scan failed: " + err.message, "critical");
+      setApiError(String(err));
+      addNotification("Scan fehlgeschlagen — Backend nicht erreichbar", "critical");
     } finally {
       setScanning(false);
     }
-  }, [addNotification]);
+  }, [applyNormalizedScan, scoreHistory, addNotification]);
 
-  // ── Fix handler ───────────────────────────────────────────────────────────
+  // ── Fix a finding ──────────────────────────────────────────────────────────
   const handleFix = useCallback(async (finding) => {
-    const { id, remediation_tier } = typeof finding === "string"
-      ? { id: finding, remediation_tier: "auto" }
-      : finding;
+    const tier = finding.remediation_tier;
 
-    if (remediation_tier === "auto") {
-      // Real API remediation
+    if (tier === "approval") {
+      setFixedIds(prev => new Set([...prev, finding.id]));
+      addNotification(`Pending approval: ${finding.id}`, "warning");
+      setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] PENDING_APPROVAL\nseverity: info\ndomain: ${finding.domain}\ndetail: ${finding.id} marked for approval\naction_taken: queued\n---`]);
+      return;
+    }
+
+    if (tier === "auto") {
       try {
-        const result = await applyRemediation(id);
-        if (result.success || result.already_done) {
-          setFixedIds(prev => new Set([...prev, id]));
-          addNotification(
-            result.already_done ? `${id}: already fixed` : `Auto-fix applied: ${id} (${result.duration_ms}ms)`,
-            "ok"
-          );
-          setChangelog(prev => [...prev.slice(-19),
-            `## [${new Date().toISOString()}] AUTO_REMEDIATION\nseverity: info\ndomain: ${finding.domain || "unknown"}\ndetail: ${id} fixed via API\naction_taken: applied\n---`
-          ]);
-        } else {
-          addNotification(`Fix failed for ${id}: exit ${result.exit_code}`, "critical");
-        }
+        const res = await applyRemediation(finding.id, clawsecToken);
+        setFixedIds(prev => new Set([...prev, finding.id]));
+        addNotification(`Remediation applied: ${finding.id}`, "ok");
+        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] AUTO_REMEDIATION\nseverity: info\ndomain: ${finding.domain}\ndetail: ${finding.id} fixed\naction_taken: ${res?.already_done ? "already_done" : "applied"}\n---`]);
       } catch (err) {
-        if (err.message.includes("401") || err.message.includes("Unauthorized")) {
-          addNotification(`Auth required: ${id} — set X-ClawSec-Token (see /api/health for token path)`, "critical");
+        const msg = String(err);
+        if (msg.includes("401") || msg.includes("Unauthorized")) {
+          addNotification(`Auth required — Token in Config tab eintragen`, "warning");
         } else {
-          addNotification(`Remediation API error: ${err.message}`, "critical");
+          addNotification(`Fix fehlgeschlagen: ${finding.id}`, "critical");
         }
       }
-    } else if (remediation_tier === "approval") {
-      // Operator acknowledgment — mark locally, real fix is manual
-      setFixedIds(prev => new Set([...prev, id]));
-      addNotification(`Operator approval recorded for: ${id}`, "warning");
-      setChangelog(prev => [...prev.slice(-19),
-        `## [${new Date().toISOString()}] OPERATOR_APPROVAL\nseverity: warning\ndomain: ${finding.domain || "unknown"}\ndetail: ${id} acknowledged by operator\naction_taken: manual_required\n---`
-      ]);
     }
-  }, [addNotification]);
-
-  // ── Config save handler ───────────────────────────────────────────────────
-  const handleConfigSave = useCallback(async (fileKey, content) => {
-    // Optimistic update in-browser
-    setConfigs(c => ({ ...c, [fileKey]: content }));
-    try {
-      const result = await saveConfig(fileKey, content);
-      if (result.system_hash) {
-        setScanResult(prev => ({ ...prev, system_hash: result.system_hash }));
-      }
-      addNotification(`${fileKey.toUpperCase()}.md saved (${result.bytes} bytes) — backup: ${result.backup}`, "ok");
-      setChangelog(prev => [...prev.slice(-19),
-        `## [${new Date().toISOString()}] CONFIG_SAVED\nseverity: info\ndomain: config\ndetail: ${fileKey} updated (${result.bytes} bytes)\naction_taken: file_written\n---`
-      ]);
-    } catch (err) {
-      if (err.message.includes("444") || err.message.includes("immutable") || err.message.includes("403")) {
-        addNotification("SOUL.md ist chmod 444 — intentional immutable (correct behavior)", "warning");
-      } else {
-        addNotification(`Save failed: ${err.message}`, "critical");
-      }
-    }
-  }, [addNotification]);
+  }, [clawsecToken, addNotification]);
 
   const visibleFindings = scanResult.findings.filter(f => !fixedIds.has(f.id) && f.status !== "auto_fixed");
-  const score = scanResult.risk_score;
-  const notifColors = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
+  const score           = visibleFindings.length === 0 && scanResult.findings.length === 0 ? 0 : computeScore(visibleFindings);
+  const notifColors     = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
 
   const TABS = [
     { id: "overview",  label: "OVERVIEW" },
-    { id: "findings",  label: `FINDINGS ${visibleFindings.length > 0 ? `[${visibleFindings.length}]` : ""}` },
+    { id: "findings",  label: `FINDINGS${visibleFindings.length > 0 ? ` [${visibleFindings.length}]` : ""}` },
     { id: "agents",    label: "AGENTS" },
-    { id: "baseline",  label: "BASELINE" },
     { id: "changelog", label: "CHANGELOG" },
     { id: "config",    label: "CONFIG" },
   ];
@@ -589,17 +559,15 @@ export default function ClawSecDashboard() {
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: #050510; }
         ::-webkit-scrollbar-thumb { background: #1a2a4a; border-radius: 2px; }
-        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
-        @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
-        @keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+        @keyframes pulse  { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+        @keyframes blink  { 0%,100%{opacity:1;} 50%{opacity:0;} }
+        @keyframes spin   { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
-        @keyframes fadeOut { from{opacity:1;} to{opacity:0;transform:translateX(20px);} }
-        @keyframes scanline { 0%{top:-2px;} 100%{top:100%;} }
       `}</style>
 
       <div style={{ minHeight: "100vh", background: "#03030d", color: "#c0c8d8", fontFamily: "'JetBrains Mono', monospace" }}>
 
-        {/* Notification Stack */}
+        {/* ── Notification Stack ── */}
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
           {notifications.map(n => (
             <div key={n.id} style={{
@@ -607,38 +575,17 @@ export default function ClawSecDashboard() {
               borderLeft: `3px solid ${notifColors[n.type] || "#444"}`,
               borderRadius: "0 6px 6px 0", padding: "8px 14px",
               fontFamily: "'Share Tech Mono', monospace", fontSize: 11, color: notifColors[n.type] || "#888",
-              boxShadow: "0 4px 20px #00000088",
-              animation: "slideIn 0.3s ease",
-              maxWidth: 320,
+              boxShadow: "0 4px 20px #00000088", animation: "slideIn 0.3s ease", maxWidth: 320,
             }}>
               <span style={{ color: "#445566", marginRight: 8 }}>{n.at}</span>{n.msg}
             </div>
           ))}
         </div>
 
-        {/* API Error Banner */}
-        {apiError && (
-          <div style={{
-            background: "#1a0505", borderBottom: "1px solid #ff2d2d44",
-            padding: "8px 24px", display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <span style={{ color: "#ff6b6b", fontSize: 12 }}>⚠</span>
-            <span style={{ color: "#aa3333", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-              {apiError} — Dashboard running with last cached data
-            </span>
-            <button onClick={() => setApiError(null)} style={{
-              marginLeft: "auto", background: "none", border: "1px solid #3a1515",
-              color: "#663333", borderRadius: 3, padding: "2px 8px",
-              cursor: "pointer", fontFamily: "'Share Tech Mono', monospace", fontSize: 9,
-            }}>✕</button>
-          </div>
-        )}
-
-        {/* Header */}
+        {/* ── Header ── */}
         <div style={{
           background: "linear-gradient(180deg, #050518 0%, #03030d 100%)",
-          borderBottom: "1px solid #0f0f2e",
-          padding: "0 24px",
+          borderBottom: "1px solid #0f0f2e", padding: "0 24px",
           position: "sticky", top: 0, zIndex: 100,
         }}>
           <div style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", height: 56, gap: 24 }}>
@@ -647,8 +594,8 @@ export default function ClawSecDashboard() {
               <div style={{
                 width: 32, height: 32,
                 background: "linear-gradient(135deg, #0a1628 0%, #1a2a4a 100%)",
-                border: "1px solid #2a4a7f",
-                borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+                border: "1px solid #2a4a7f", borderRadius: 6,
+                display: "flex", alignItems: "center", justifyContent: "center",
                 boxShadow: "0 0 12px #4a7fcc22",
               }}>
                 <span style={{ color: "#4a9fff", fontSize: 16, lineHeight: 1 }}>⬡</span>
@@ -662,13 +609,16 @@ export default function ClawSecDashboard() {
             {/* Status pills */}
             <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0a1020", border: "1px solid #0f2040", borderRadius: 4, padding: "4px 10px" }}>
-                <GlowDot color={apiConnected ? "#00ff88" : "#ff4444"} pulse={apiConnected && !paused} />
-                <span style={{ color: apiConnected ? "#00aa55" : "#aa3333", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
-                  API {apiConnected ? "LIVE" : "OFFLINE"}
+                <GlowDot color={paused ? "#ff8c00" : "#00ff88"} pulse={!paused} />
+                <span style={{ color: paused ? "#aa6600" : "#00aa55", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
+                  SUPERVISOR {paused ? "PAUSED" : "LIVE"}
                 </span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0a1020", border: "1px solid #0f2040", borderRadius: 4, padding: "4px 10px" }}>
-                <span style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>HB #{tick}</span>
+                <GlowDot color={apiConnected ? "#00ff88" : "#ff2d2d"} pulse={apiConnected} />
+                <span style={{ color: apiConnected ? "#00aa55" : "#aa2222", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
+                  API {apiConnected ? "LIVE" : "OFFLINE"}
+                </span>
               </div>
             </div>
 
@@ -686,10 +636,23 @@ export default function ClawSecDashboard() {
           </div>
         </div>
 
-        {/* Main Layout */}
+        {/* API Error Banner */}
+        {apiError && (
+          <div style={{
+            background: "#1a0505", borderBottom: "1px solid #ff2d2d33",
+            padding: "8px 24px", fontFamily: "'Share Tech Mono', monospace", fontSize: 10,
+            color: "#ff6b6b", display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span>⚠</span>
+            <span>{apiError}</span>
+            <span style={{ color: "#445566", marginLeft: "auto" }}>Dashboard läuft im Offline-Modus</span>
+          </div>
+        )}
+
+        {/* ── Main Layout ── */}
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "24px 24px" }}>
 
-          {/* Top KPI Strip */}
+          {/* KPI Strip */}
           <div style={{
             display: "grid", gridTemplateColumns: "140px 1fr auto",
             gap: 16, marginBottom: 24, alignItems: "center",
@@ -700,15 +663,12 @@ export default function ClawSecDashboard() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
               {[
-                { label: "CRITICAL", value: visibleFindings.filter(f => f.severity === "critical").length, color: "#ff2d2d" },
-                { label: "HIGH",     value: visibleFindings.filter(f => f.severity === "high").length, color: "#ff8c00" },
-                { label: "AUTO-FIXED", value: scanResult.applied_fixes.length + fixedIds.size, color: "#00ff88" },
-                { label: "PENDING",  value: scanResult.pending_approval.length, color: "#ffd700" },
+                { label: "CRITICAL",   value: visibleFindings.filter(f => f.severity === "critical").length, color: "#ff2d2d" },
+                { label: "HIGH",       value: visibleFindings.filter(f => f.severity === "high").length,     color: "#ff8c00" },
+                { label: "AUTO-FIXED", value: scanResult.applied_fixes.length + fixedIds.size,              color: "#00ff88" },
+                { label: "PENDING",    value: scanResult.pending_approval.length,                            color: "#ffd700" },
               ].map(({ label, value, color }) => (
-                <div key={label} style={{
-                  background: "#07070f", border: "1px solid #0f0f1e",
-                  borderRadius: 8, padding: "14px 16px",
-                }}>
+                <div key={label} style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "14px 16px" }}>
                   <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1.5, marginBottom: 6 }}>{label}</div>
                   <div style={{ color, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 32, fontWeight: 900, lineHeight: 1 }}>{value}</div>
                 </div>
@@ -716,7 +676,9 @@ export default function ClawSecDashboard() {
             </div>
 
             <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "14px 16px" }}>
-              <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, marginBottom: 8 }}>RISK HISTORY</div>
+              <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, marginBottom: 8 }}>
+                RISK HISTORY · {scoreHistory.length} points
+              </div>
               <ScoreHistoryChart history={scoreHistory} />
             </div>
           </div>
@@ -724,13 +686,12 @@ export default function ClawSecDashboard() {
           {/* Tabs */}
           <TabBar tabs={TABS} active={tab} onChange={setTab} />
 
-          {/* Tab Content */}
-
+          {/* ══ OVERVIEW ══ */}
           {tab === "overview" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>AGENT STATUS</div>
-                <AgentStatusBar heartbeat={heartbeat} />
+                <AgentStatusBar heartbeat={heartbeat} apiConnected={apiConnected} />
               </div>
 
               <div>
@@ -742,6 +703,11 @@ export default function ClawSecDashboard() {
                   <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "12px 14px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4 }}>
                     <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>SYSTEM HASH</div>
                     <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>{scanResult.system_hash}</div>
+                    {scanResult.scanned_at && (
+                      <div style={{ color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
+                        {new Date(scanResult.scanned_at).toLocaleTimeString("de-DE")}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -754,7 +720,7 @@ export default function ClawSecDashboard() {
               {visibleFindings.length > 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
                   <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>ACTIVE FINDINGS</div>
-                  {visibleFindings.slice(0, 3).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} />)}
+                  {visibleFindings.slice(0, 3).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)}
                   {visibleFindings.length > 3 && (
                     <div onClick={() => setTab("findings")} style={{ color: "#4a7fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 10, cursor: "pointer", padding: "6px 0", letterSpacing: 1 }}>
                       + {visibleFindings.length - 3} more → VIEW ALL FINDINGS
@@ -762,14 +728,22 @@ export default function ClawSecDashboard() {
                   )}
                 </div>
               )}
+
+              {!scanResult.scanned_at && (
+                <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: "#334455" }}>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 11, marginBottom: 12 }}>Noch kein Scan geladen.</div>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>Klick auf ▶ RUN SCAN um den ersten Scan zu starten.</div>
+                </div>
+              )}
             </div>
           )}
 
+          {/* ══ FINDINGS ══ */}
           {tab === "findings" && (
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <div style={{ color: "#667788", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-                  {visibleFindings.length} active · {fixedIds.size} resolved this session
+                  {visibleFindings.length} active · {fixedIds.size + scanResult.applied_fixes.length} resolved
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {["critical", "high", "medium", "low"].map(sev => {
@@ -787,38 +761,46 @@ export default function ClawSecDashboard() {
               {visibleFindings.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "60px 0", color: "#00ff88", fontFamily: "'Share Tech Mono', monospace", fontSize: 14, letterSpacing: 2 }}>
                   <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
-                  NO ACTIVE FINDINGS
-                  <div style={{ color: "#334455", fontSize: 10, marginTop: 8 }}>System is clean. Score: {Math.round(score)}/100</div>
+                  {scanResult.scanned_at ? "NO ACTIVE FINDINGS" : "SCAN AUSSTEHEND"}
+                  <div style={{ color: "#334455", fontSize: 10, marginTop: 8 }}>
+                    {scanResult.scanned_at ? `Score: ${Math.round(score)}/100` : "Klick auf ▶ RUN SCAN"}
+                  </div>
                 </div>
               ) : (
-                visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} />)
+                visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)
+              )}
+              {/* Resolved findings (this session) */}
+              {fixedIds.size > 0 && (
+                <div style={{ marginTop: 24 }}>
+                  <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>RESOLVED THIS SESSION</div>
+                  {scanResult.findings.filter(f => fixedIds.has(f.id)).map(f => (
+                    <FindingRow key={f.id} finding={f} onFix={() => {}} fixed={true} />
+                  ))}
+                </div>
               )}
             </div>
           )}
 
+          {/* ══ AGENTS ══ */}
           {tab === "agents" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 12 }}>KAIROS — PRIMARY AGENT</div>
-                <AgentStatusBar heartbeat={heartbeat} />
+                <AgentStatusBar heartbeat={heartbeat} apiConnected={apiConnected} />
               </div>
-
               {[
-                { name: "clawsec-env",     domain: "credentials", desc: "Scans .env, git history, process env" },
-                { name: "clawsec-perm",    domain: "identity",    desc: "Monitors SOUL.md, CONSTRAINTS.md, file permissions" },
-                { name: "clawsec-net",     domain: "network",     desc: "Checks port binding, gateway exposure, CORS" },
-                { name: "clawsec-session", domain: "sessions",    desc: "Audits session files, memory store permissions" },
-                { name: "clawsec-config",  domain: "config",      desc: "Validates openclaw.json, MCP servers, auth" },
+                { name: "clawsec-env",     domain: "credentials", desc: "Scans .env, git history, process env for exposed secrets" },
+                { name: "clawsec-perm",    domain: "identity",    desc: "Monitors SOUL.md, CONSTRAINTS.md and file permissions" },
+                { name: "clawsec-net",     domain: "network",     desc: "Checks port binding, gateway exposure, CORS policy" },
+                { name: "clawsec-session", domain: "sessions",    desc: "Audits session files, memory store permissions and isolation" },
+                { name: "clawsec-config",  domain: "config",      desc: "Validates openclaw.json, exec_security, dm_policy, MCP servers" },
               ].map(agent => {
                 const domFindings = visibleFindings.filter(f => f.domain === agent.domain);
                 const ok = domFindings.length === 0;
                 const c = ok ? SEV.ok : SEV[domFindings[0]?.severity || "medium"];
-                const domData = scanResult.domains[agent.domain] || { duration_ms: 0, scanned: false };
+                const domData = scanResult.domains[agent.domain];
                 return (
-                  <div key={agent.name} style={{
-                    background: "#07070f", border: `1px solid ${c.border}33`,
-                    borderRadius: 8, padding: "16px 18px",
-                  }}>
+                  <div key={agent.name} style={{ background: "#07070f", border: `1px solid ${c.border}33`, borderRadius: 8, padding: "16px 18px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                       <GlowDot color={c.glow} pulse={!ok} />
                       <span style={{ color: "#9aafcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1 }}>{agent.name}</span>
@@ -828,61 +810,25 @@ export default function ClawSecDashboard() {
                     </div>
                     <div style={{ color: "#556677", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 10 }}>{agent.desc}</div>
                     <div style={{ display: "flex", gap: 12, color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-                      <span>{domData.scanned ? `${domData.duration_ms}ms` : "not scanned"}</span>
+                      {domData?.duration_ms > 0 && <span>LAST RUN: {domData.duration_ms}ms</span>}
                       <span>DOMAIN: {agent.domain.toUpperCase()}</span>
                     </div>
+                    {domFindings.length > 0 && (
+                      <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {domFindings.map(f => (
+                          <span key={f.id} style={{ background: SEV[f.severity].bg, border: `1px solid ${SEV[f.severity].border}44`, color: SEV[f.severity].text, borderRadius: 3, padding: "1px 7px", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
+                            {f.id}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
 
-          {tab === "baseline" && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div style={{ color: "#667788", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-                  {Object.keys(baseline).length} registered components · System hash: <span style={{ color: "#334455" }}>{scanResult.system_hash}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <GlowDot color="#00ff88" pulse={false} />
-                  <span style={{ color: "#00aa55", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>BASELINE ACTIVE</span>
-                </div>
-              </div>
-              <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: 16 }}>
-                <BaselineTable baseline={baseline} />
-              </div>
-
-              <div style={{ marginTop: 20 }}>
-                <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 12 }}>ATTACK COVERAGE MATRIX</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {[
-                    { attack: "Goal Hijacking",    protection: 100, status: "BLOCKED" },
-                    { attack: "Credential Exfil",  protection: 90,  status: "BLOCKED" },
-                    { attack: "Malicious Plugin",   protection: 85,  status: "MONITORED" },
-                    { attack: "Gateway Exposure",   protection: 85,  status: "MONITORED" },
-                    { attack: "Direct Injection",   protection: 80,  status: "MITIGATED" },
-                    { attack: "Behavioral Drift",   protection: 65,  status: "DETECTED" },
-                    { attack: "Indirect Injection", protection: 35,  status: "PARTIAL" },
-                    { attack: "Memory Poisoning",   protection: 15,  status: "BLIND SPOT" },
-                  ].map(({ attack, protection, status }) => {
-                    const c = protection >= 80 ? "#00ff88" : protection >= 60 ? "#ffd700" : protection >= 35 ? "#ff8c00" : "#ff2d2d";
-                    return (
-                      <div key={attack} style={{ background: "#050510", border: "1px solid #0f0f1e", borderRadius: 6, padding: "10px 14px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                          <span style={{ color: "#9aafcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>{attack}</span>
-                          <span style={{ color: c, fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{status}</span>
-                        </div>
-                        <div style={{ background: "#0a0a18", borderRadius: 3, height: 4, overflow: "hidden" }}>
-                          <div style={{ width: protection + "%", height: "100%", background: c, boxShadow: `0 0 6px ${c}`, transition: "width 0.6s ease" }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
+          {/* ══ CHANGELOG ══ */}
           {tab === "changelog" && (
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -890,8 +836,10 @@ export default function ClawSecDashboard() {
                   {changelog.length} entries · append-only · live
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <GlowDot color="#4a7fcc" pulse={!paused} />
-                  <span style={{ color: "#334466", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>STREAMING</span>
+                  <GlowDot color="#4a7fcc" pulse={!paused && apiConnected} />
+                  <span style={{ color: "#334466", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
+                    {apiConnected ? "STREAMING" : "OFFLINE"}
+                  </span>
                 </div>
               </div>
               <div style={{ background: "#050510", border: "1px solid #0f0f1e", borderRadius: 8, padding: 4 }}>
@@ -900,33 +848,56 @@ export default function ClawSecDashboard() {
             </div>
           )}
 
+          {/* ══ CONFIG ══ */}
           {tab === "config" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <ConfigEditor
                 title="SOUL.md — Identity Anchor"
                 content={configs.soul}
-                onSave={(v) => handleConfigSave("soul", v)}
+                readOnly={true}
+                onSave={() => {}}
               />
               <ConfigEditor
                 title="CONSTRAINTS.md — Hard Limits"
                 content={configs.constraints}
-                onSave={(v) => handleConfigSave("constraints", v)}
+                readOnly={true}
+                onSave={() => {}}
               />
               <ConfigEditor
                 title="GATEWAY.md — Routing Rules"
                 content={configs.gateway}
-                onSave={(v) => handleConfigSave("gateway", v)}
+                readOnly={false}
+                onSave={(v) => {
+                  const updated = { ...configs, gateway: v };
+                  setConfigs(updated);
+                  saveLocalConfig(updated);
+                  addNotification("GATEWAY.md lokal gespeichert", "info");
+                }}
               />
               <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: 16 }}>
-                <div style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1, marginBottom: 12 }}>SUPERVISOR CONFIG</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1, marginBottom: 12 }}>AUTH TOKEN</div>
+                <div style={{ color: "#556677", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
+                  Für POST /api/apply/ (Auto-Fix) wird der ClawSec-Token benötigt.
+                  <br />Token liegt auf dem Server unter: <span style={{ color: "#334455" }}>.clawsec_token</span>
+                </div>
+                <input
+                  type="password"
+                  placeholder="Token einfügen..."
+                  value={clawsecToken}
+                  onChange={(e) => { setClawsecToken(e.target.value); saveToken(e.target.value); }}
+                  style={{
+                    width: "100%", background: "#050510", border: "1px solid #1a1a2e",
+                    borderRadius: 6, color: "#8899aa",
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+                    padding: "8px 12px", outline: "none", boxSizing: "border-box",
+                  }}
+                />
+                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {[
-                    { label: "HEARTBEAT INTERVAL", value: "15s" },
+                    { label: "TICK INTERVAL",     value: "—" },
+                    { label: "HEARTBEAT",          value: "15s" },
                     { label: "SCAN TIMEOUT",       value: "35s" },
-                    { label: "BACKEND",            value: "127.0.0.1:3001" },
-                    { label: "CIRCUIT BREAKER",    value: "5 failures" },
-                    { label: "AUTH",               value: "X-ClawSec-Token" },
-                    { label: "ALERT CHANNEL",      value: "Telegram" },
+                    { label: "TOOL CALL BASELINE", value: "20/5min" },
                   ].map(({ label, value }) => (
                     <div key={label} style={{ padding: "8px 0", borderBottom: "1px solid #0a0a18" }}>
                       <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, marginBottom: 3 }}>{label}</div>
@@ -941,17 +912,16 @@ export default function ClawSecDashboard() {
         </div>
 
         {/* Footer */}
-        <div style={{
-          borderTop: "1px solid #07070f", padding: "12px 24px",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
+        <div style={{ borderTop: "1px solid #07070f", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
             CLAWSEC 2.0 · OPENCLAW SECURITY PLANE · {new Date().toLocaleDateString("de-DE")}
           </div>
           <div style={{ display: "flex", gap: 16, color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
             <span>OWASP LLM TOP 10:2025</span>
             <span>OWASP AGENTIC AI:2026</span>
-            <span>API: {apiConnected ? "CONNECTED" : "OFFLINE"}</span>
+            <span style={{ color: apiConnected ? "#003322" : "#330000" }}>
+              BACKEND: {apiConnected ? "CONNECTED" : "OFFLINE"}
+            </span>
           </div>
         </div>
 
