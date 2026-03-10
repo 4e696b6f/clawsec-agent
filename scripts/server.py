@@ -64,6 +64,7 @@ TARGET_DIR = os.path.expanduser(
 )
 SCRIPT_DIR = Path(__file__).parent
 REPORTS_DIR = SCRIPT_DIR.parent / "reports"
+APPLIED_FIXES_PATH = REPORTS_DIR / "applied-fixes.json"
 VERSION = "2.0.0"
 SCAN_SCHEMA_VERSION = "1.0"
 
@@ -131,6 +132,35 @@ CONFIG_MAX_BYTES = 65_536  # 64KB max per config file
 IMMUTABLE_CONFIG_KEYS = {"soul", "constraints"}
 
 CHECK_ID_RE = re.compile(r"^[a-z_]{1,64}$")
+
+
+def _load_applied_fixes() -> list[dict]:
+    """Load applied-fixes.json. Returns empty list if missing or invalid."""
+    if not APPLIED_FIXES_PATH.exists():
+        return []
+    try:
+        data = json.loads(APPLIED_FIXES_PATH.read_text())
+        entries = data.get("entries", [])
+        return entries if isinstance(entries, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _append_applied_fix(check_id: str, exit_code: int, duration_ms: int) -> None:
+    """Append a fix entry to applied-fixes.json."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    entries = _load_applied_fixes()
+    entries.append({
+        "check_id": check_id,
+        "applied_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "system_hash_at_apply": compute_system_hash(),
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+    })
+    # Keep last 100 entries
+    if len(entries) > 100:
+        entries = entries[-100:]
+    APPLIED_FIXES_PATH.write_text(json.dumps({"entries": entries}, indent=2))
 
 
 def compute_system_hash() -> str:
@@ -475,6 +505,14 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 "agents": list(AGENT_SCRIPTS.keys()),
             })
 
+        # GET /api/applied-fixes — persisted fix history for re-config detection
+        if parsed.path == "/api/applied-fixes":
+            entries = _load_applied_fixes()
+            return self.send_json(200, {
+                "entries": entries,
+                "current_system_hash": compute_system_hash(),
+            })
+
         return self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
@@ -518,6 +556,10 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 logger.error("Script %s exit %d: %s", check_id, exit_code, stderr[:200])
             else:
                 logger.info("Applied %s — exit %d (%dms)", check_id, exit_code, duration)
+                try:
+                    _append_applied_fix(check_id, exit_code, duration)
+                except Exception as e:
+                    logger.warning("Could not persist applied fix: %s", e)
             audit_event(
                 "remediation_applied",
                 client_ip=self.address_string(),

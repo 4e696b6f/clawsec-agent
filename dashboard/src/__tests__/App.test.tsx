@@ -5,13 +5,14 @@ import type { ScanResult } from "../types";
 
 // ─── Mock the entire api module ───────────────────────────────────────────────
 vi.mock("../api", () => ({
-  fetchLastReport:   vi.fn().mockResolvedValue(null),
-  fetchHeartbeat:    vi.fn().mockResolvedValue(null),
-  fetchScan:         vi.fn(),
-  applyRemediation:  vi.fn(),
-  computeScore:      vi.fn().mockReturnValue(0),
-  loadHistory:       vi.fn().mockReturnValue([]),
-  saveHistory:       vi.fn(),
+  fetchLastReport:    vi.fn().mockResolvedValue(null),
+  fetchHeartbeat:     vi.fn().mockResolvedValue(null),
+  fetchAppliedFixes:  vi.fn().mockResolvedValue({ entries: [], current_system_hash: "" }),
+  fetchScan:          vi.fn(),
+  applyRemediation:   vi.fn(),
+  computeScore:       vi.fn().mockReturnValue(0),
+  loadHistory:        vi.fn().mockReturnValue([]),
+  saveHistory:        vi.fn(),
 }));
 
 vi.mock("../logger", () => ({
@@ -146,10 +147,11 @@ describe("App smoke tests", () => {
     });
   });
 
-  it("shows tabs: Overview, Findings, Agents, Changelog, Config", () => {
+  it("shows tabs: Overview, Findings, Applied, Agents, Changelog, Config", () => {
     render(<App />);
     expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Findings/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Applied/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Changelog" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Config" })).toBeTruthy();

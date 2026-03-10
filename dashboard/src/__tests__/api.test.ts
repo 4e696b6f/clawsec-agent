@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { normalizeScan, computeScore, fetchScan, fetchLastReport, applyRemediation } from "../api";
+import { normalizeScan, computeScore, fetchScan, fetchLastReport, fetchAppliedFixes, applyRemediation } from "../api";
 import type { RawScanResponse } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -228,6 +228,27 @@ describe("fetchLastReport", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("net::ERR_CONNECTION_REFUSED")));
     const result = await fetchLastReport();
     expect(result).toBeNull();
+  });
+});
+
+// ─── fetchAppliedFixes ────────────────────────────────────────────────────────
+
+describe("fetchAppliedFixes", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("returns AppliedFixesResponse on 200", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, { entries: [{ check_id: "env_gitignore", applied_at: "2026-01-01T00:00:00Z", system_hash_at_apply: "abc12345", exit_code: 0, duration_ms: 100 }], current_system_hash: "abc12345" }));
+    const result = await fetchAppliedFixes();
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].check_id).toBe("env_gitignore");
+    expect(result.current_system_hash).toBe("abc12345");
+  });
+
+  it("returns empty on non-200", async () => {
+    vi.stubGlobal("fetch", mockFetch(500, {}));
+    const result = await fetchAppliedFixes();
+    expect(result.entries).toHaveLength(0);
+    expect(result.current_system_hash).toBe("");
   });
 });
 

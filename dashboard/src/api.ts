@@ -14,6 +14,7 @@ import { logger } from "./logger";
 import type {
   Finding, ScanResult, RawScanResponse, AgentResult,
   HeartbeatResponse, ApplyResponse, ConfigSaveResponse,
+  AppliedFixesResponse,
 } from "./types";
 
 // Base URL for the ClawSec backend API.
@@ -199,6 +200,17 @@ export async function applyRemediation(checkId: string, token = ""): Promise<App
     throw new Error(msg);
   }
   return res.json() as Promise<ApplyResponse>;
+}
+
+// ─── fetchAppliedFixes ─────────────────────────────────────────────────────────
+/** Load persisted fix history for re-config detection. */
+export async function fetchAppliedFixes(): Promise<AppliedFixesResponse> {
+  const res = await fetch(`${BASE}/applied-fixes`);
+  if (!res.ok) {
+    logger.warn("fetchAppliedFixes failed", { status: res.status });
+    return { entries: [], current_system_hash: "" };
+  }
+  return res.json() as Promise<AppliedFixesResponse>;
 }
 
 // ─── fetchReportHistory ───────────────────────────────────────────────────────

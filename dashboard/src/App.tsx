@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  fetchScan, fetchLastReport, fetchHeartbeat,
+  fetchScan, fetchLastReport, fetchHeartbeat, fetchAppliedFixes,
   applyRemediation, computeScore, loadHistory, saveHistory,
 } from "./api";
 import { logger } from "./logger";
-import type { Finding, ScanResult, HeartbeatResponse, DomainStatus } from "./types";
+import type { Finding, ScanResult, HeartbeatResponse, DomainStatus, AppliedFixEntry, AppliedFixesResponse } from "./types";
 import { AgentHierarchy } from "./components/AgentHierarchy";
+import { ScannerPipeline } from "./components/ScannerPipeline";
 
 // ─── Local types ───────────────────────────────────────────────────────────────
 type NotifType = "critical" | "warning" | "ok" | "info";
+type AppliedFixStatus = "none" | "verified" | "stale";
 
 interface Notification {
   id: number;
@@ -167,9 +169,17 @@ const DomainCard = ({ name, data, findings, compact }: DomainCardProps) => {
   );
 };
 
-interface FindingRowProps { finding: Finding; onFix: (f: Finding) => void; fixed: boolean; }
-const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
+interface FindingRowPropsInner {
+  finding: Finding;
+  onFix: (f: Finding) => void;
+  onReApply?: (checkId: string) => void;
+  fixed: boolean;
+  appliedFixStatus?: AppliedFixStatus;
+  scannedAt?: string | null;
+}
+const FindingRow = ({ finding, onFix, onReApply, fixed, appliedFixStatus = "none", scannedAt }: FindingRowPropsInner) => {
   const c = SEV[finding.severity] ?? SEV.info;
+  const [expanded, setExpanded] = useState(false);
   return (
     <div style={{
       background: fixed ? "var(--sev-ok-bg)" : c.bg,
@@ -181,43 +191,51 @@ const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
     }}>
       <div style={{ flexShrink: 0, paddingTop: 2 }}>
         {fixed
-          ? <span style={{ color: "#00ff88", fontSize: 12 }}>✓</span>
+          ? <span style={{ color: "var(--accent-green)", fontSize: 12 }}>✓</span>
           : <GlowDot color={c.glow} pulse={finding.severity === "critical"} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, flexWrap: "wrap" }}>
           {!fixed && (
             <span style={{
               background: c.border + "33", color: c.text, border: `1px solid ${c.border}66`,
-              borderRadius: 3, padding: "1px 7px",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, textTransform: "uppercase",
+              borderRadius: 3, padding: "1px 6px",
+              fontFamily: "var(--font-mono)", fontSize: 9, textTransform: "uppercase",
             }}>{finding.severity}</span>
           )}
-          {fixed && <span style={{ color: "#00ff88", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>RESOLVED</span>}
-          <span style={{ color: "#777", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.id}</span>
-          <span style={{ color: "#445", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.agent}</span>
-          {finding.owasp_llm && <span style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.owasp_llm}</span>}
-          {finding.owasp_asi && <span style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>{finding.owasp_asi}</span>}
+          {fixed && <span style={{ color: "var(--accent-green)", fontFamily: "var(--font-mono)", fontSize: 9 }}>Resolved</span>}
+          <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{finding.id}</span>
+          <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{finding.domain ?? finding.agent}</span>
+          {scannedAt && <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{new Date(scannedAt).toLocaleString("de-DE")}</span>}
         </div>
-        <div style={{ color: "#d4d4d4", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, marginBottom: 4 }}>{finding.message}</div>
-        <div style={{ color: "#666", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>{finding.recommendation}</div>
+        <div style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 11, marginBottom: expanded ? 4 : 0 }}>{finding.message}</div>
+        {expanded && <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{finding.recommendation}</div>}
+        {!expanded && finding.recommendation && (
+          <button onClick={() => setExpanded(true)} style={{ background: "none", border: "none", color: "var(--accent-blue)", fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer", padding: 0 }}>Show details</button>
+        )}
+        {expanded && <button onClick={() => setExpanded(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer", padding: 0, marginTop: 4 }}>Hide</button>}
       </div>
       {!fixed && (
         <div style={{ flexShrink: 0 }}>
-          {finding.remediation_tier === "auto" && (
+          {finding.remediation_tier === "auto" && appliedFixStatus === "verified" && (
+            <span style={{ color: "var(--accent-green)", fontFamily: "var(--font-mono)", fontSize: 9 }}>Already applied</span>
+          )}
+          {finding.remediation_tier === "auto" && appliedFixStatus === "stale" && onReApply && (
+            <button onClick={() => onReApply(finding.id)} style={{
+              background: "var(--sev-high-bg)", border: "1px solid var(--sev-high-border)", color: "var(--sev-high-text)",
+              borderRadius: "var(--radius-sm)", padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer", transition: "all 0.2s",
+            }}>Re-apply</button>
+          )}
+          {finding.remediation_tier === "auto" && appliedFixStatus === "none" && (
             <button onClick={() => onFix(finding)} style={{
               background: "var(--sev-ok-bg)", border: "1px solid var(--sev-ok-border)", color: "var(--accent-green)",
-              borderRadius: "var(--radius-sm)", padding: "4px 10px",
-              fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer",
-              transition: "all 0.2s",
+              borderRadius: "var(--radius-sm)", padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer", transition: "all 0.2s",
             }}>Auto fix</button>
           )}
           {finding.remediation_tier === "approval" && (
             <button onClick={() => onFix(finding)} style={{
               background: "var(--sev-medium-bg)", border: "1px solid var(--sev-medium-border)", color: "var(--accent-yellow)",
-              borderRadius: "var(--radius-sm)", padding: "4px 10px",
-              fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer",
-              transition: "all 0.2s",
+              borderRadius: "var(--radius-sm)", padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer", transition: "all 0.2s",
             }}>Approve</button>
           )}
           {finding.remediation_tier === "never" && (
@@ -377,6 +395,7 @@ const ScanTriggerButton = ({ scanning, onClick }: ScanTriggerButtonProps) => (
 export default function ClawSecDashboard() {
   const [scanResult, setScanResult]       = useState<ScanResult>(defaultScanResult);
   const [heartbeat, setHeartbeat]         = useState<HeartbeatResponse>(defaultHeartbeat);
+  const [appliedFixes, setAppliedFixes]   = useState<AppliedFixesResponse>({ entries: [], current_system_hash: "" });
   const [changelog, setChangelog]         = useState<string[]>([
     `## [${new Date().toISOString()}] SUPERVISOR_INIT\nseverity: info\ndomain: all\ndetail: ClawSec Dashboard v3 started. Connecting to backend...\naction_taken: awaiting_scan\n---`,
   ]);
@@ -424,6 +443,10 @@ export default function ClawSecDashboard() {
 
     fetchHeartbeat()
       .then(hb => { if (hb) { setHeartbeat(hb); setApiConnected(true); setApiError(null); } })
+      .catch(() => {});
+
+    fetchAppliedFixes()
+      .then(af => { setAppliedFixes(af); })
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -488,6 +511,7 @@ export default function ClawSecDashboard() {
         setFixedIds(prev => new Set([...prev, finding.id]));
         addNotification(`Remediation applied: ${finding.id}`, "ok");
         setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] AUTO_REMEDIATION\nseverity: info\ndomain: ${finding.domain ?? "unknown"}\ndetail: ${finding.id} fixed\naction_taken: ${res?.already_done ? "already_done" : "applied"}\n---`]);
+        fetchAppliedFixes().then(af => setAppliedFixes(af));
       } catch (err) {
         const msg = String(err);
         logger.error("handleFix failed", { checkId: finding.id, error: msg });
@@ -500,16 +524,45 @@ export default function ClawSecDashboard() {
     }
   }, [clawsecToken, addNotification]);
 
-  const visibleFindings = scanResult.findings.filter(f => !fixedIds.has(f.id) && f.status !== "auto_fixed");
+  const handleReApply = useCallback(async (checkId: string) => {
+    try {
+      await applyRemediation(checkId, clawsecToken);
+      addNotification(`Re-applied: ${checkId}`, "ok");
+      fetchAppliedFixes().then(af => setAppliedFixes(af));
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("401") || msg.includes("Unauthorized")) {
+        addNotification("Auth required — Token in Config tab", "warning");
+      } else {
+        addNotification(`Re-apply failed: ${checkId}`, "critical");
+      }
+    }
+  }, [clawsecToken, addNotification]);
+
+  const visibleFindings = scanResult.findings
+    .filter(f => !fixedIds.has(f.id) && f.status !== "auto_fixed")
+    .sort((a, b) => {
+      const aSev = ["critical", "high", "medium", "low", "info"].indexOf(a.severity);
+      const bSev = ["critical", "high", "medium", "low", "info"].indexOf(b.severity);
+      return aSev - bSev || (a.id.localeCompare(b.id));
+    });
+
+  const getAppliedFixStatus = (checkId: string): AppliedFixStatus => {
+    const entry = appliedFixes.entries.find(e => e.check_id === checkId);
+    if (!entry) return "none";
+    if (!appliedFixes.current_system_hash) return "verified";
+    return entry.system_hash_at_apply === appliedFixes.current_system_hash ? "verified" : "stale";
+  };
   const score           = visibleFindings.length === 0 && scanResult.findings.length === 0 ? 0 : computeScore(visibleFindings);
   const notifColors: Record<NotifType, string> = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
 
   const TABS = [
-    { id: "overview",  label: "Overview" },
-    { id: "findings",  label: visibleFindings.length > 0 ? `Findings (${visibleFindings.length})` : "Findings" },
-    { id: "agents",    label: "Agents" },
-    { id: "changelog", label: "Changelog" },
-    { id: "config",    label: "Config" },
+    { id: "overview",     label: "Overview" },
+    { id: "findings",     label: visibleFindings.length > 0 ? `Findings (${visibleFindings.length})` : "Findings" },
+    { id: "applied",     label: appliedFixes.entries.length > 0 ? `Applied (${appliedFixes.entries.length})` : "Applied" },
+    { id: "agents",      label: "Agents" },
+    { id: "changelog",   label: "Changelog" },
+    { id: "config",      label: "Config" },
   ];
 
   return (
@@ -523,6 +576,7 @@ export default function ClawSecDashboard() {
         @keyframes blink  { 0%,100%{opacity:1;} 50%{opacity:0;} }
         @keyframes spin   { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
+        @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
       `}</style>
 
       <div style={{ minHeight: "100vh", background: "var(--bg-base)", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
@@ -635,6 +689,9 @@ export default function ClawSecDashboard() {
           {tab === "overview" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
               <div style={{ gridColumn: "1 / -1" }}>
+                <ScannerPipeline domains={scanResult.domains} scanning={scanning} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
                 <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Agent status</div>
                 <AgentHierarchy
                   heartbeat={heartbeat}
@@ -671,7 +728,7 @@ export default function ClawSecDashboard() {
               {visibleFindings.length > 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
                   <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Active findings</div>
-                  {visibleFindings.slice(0, 2).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)}
+                  {visibleFindings.slice(0, 2).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} onReApply={handleReApply} fixed={false} appliedFixStatus={getAppliedFixStatus(f.id)} scannedAt={scanResult.scanned_at} />)}
                   {visibleFindings.length > 2 && (
                     <div onClick={() => setTab("findings")} style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 11, cursor: "pointer", padding: "6px 0", transition: "opacity 0.2s" }}>
                       + {visibleFindings.length - 2} more → View all findings
@@ -695,6 +752,9 @@ export default function ClawSecDashboard() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
                 <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
                   {visibleFindings.length} active · {fixedIds.size + scanResult.applied_fixes.length} resolved
+                  {scanResult.scanned_at && (
+                    <span style={{ marginLeft: 8 }}>Scan: {new Date(scanResult.scanned_at).toLocaleString("de-DE")}</span>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {(["critical", "high", "medium", "low"] as const).map(sev => {
@@ -718,7 +778,7 @@ export default function ClawSecDashboard() {
                   </div>
                 </div>
               ) : (
-                visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)
+                visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} onReApply={handleReApply} fixed={false} appliedFixStatus={getAppliedFixStatus(f.id)} scannedAt={scanResult.scanned_at} />)
               )}
               {fixedIds.size > 0 && (
                 <div style={{ marginTop: "var(--space-4)" }}>
@@ -726,6 +786,57 @@ export default function ClawSecDashboard() {
                   {scanResult.findings.filter(f => fixedIds.has(f.id)).map(f => (
                     <FindingRow key={f.id} finding={f} onFix={() => {}} fixed={true} />
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ APPLIED FIXES ══ */}
+          {tab === "applied" && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10 }}>
+                  {appliedFixes.entries.length} applied · system hash: {appliedFixes.current_system_hash || "—"}
+                </div>
+              </div>
+              {appliedFixes.entries.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px 0", color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 12 }}>
+                  No fixes applied yet. Apply fixes from the Findings tab.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                  {[...appliedFixes.entries].reverse().map((entry: AppliedFixEntry, i: number) => {
+                    const isStale = appliedFixes.current_system_hash && entry.system_hash_at_apply !== appliedFixes.current_system_hash;
+                    return (
+                      <div key={`${entry.check_id}-${entry.applied_at}-${i}`} style={{
+                        background: "var(--bg-card)", border: `1px solid ${isStale ? "var(--sev-high-border)44" : "var(--border-default)"}`,
+                        borderRadius: "var(--radius-md)", padding: "var(--space-3)",
+                        display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-2)",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                          <span style={{ color: "var(--accent-green)", fontSize: 12 }}>✓</span>
+                          <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.check_id}</span>
+                          <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>
+                            {new Date(entry.applied_at).toLocaleString("de-DE")} · {entry.duration_ms}ms
+                          </span>
+                          {isStale && (
+                            <span style={{
+                              background: "var(--sev-high-bg)", border: "1px solid var(--sev-high-border)",
+                              color: "var(--sev-high-text)", borderRadius: "var(--radius-sm)", padding: "2px 6px",
+                              fontFamily: "var(--font-mono)", fontSize: 9,
+                            }}>Re-apply recommended</span>
+                          )}
+                        </div>
+                        {isStale && (
+                          <button onClick={() => handleReApply(entry.check_id)} style={{
+                            background: "var(--sev-high-bg)", border: "1px solid var(--sev-high-border)", color: "var(--sev-high-text)",
+                            borderRadius: "var(--radius-sm)", padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 9,
+                            cursor: "pointer", transition: "all 0.2s",
+                          }}>Re-apply</button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

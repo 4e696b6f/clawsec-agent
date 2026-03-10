@@ -96,3 +96,17 @@ export interface ConfigSaveResponse {
   file: string;
   system_hash: string;
 }
+
+/** GET /api/applied-fixes — persisted fix history */
+export interface AppliedFixEntry {
+  check_id: string;
+  applied_at: string;
+  system_hash_at_apply: string;
+  exit_code: number;
+  duration_ms: number;
+}
+
+export interface AppliedFixesResponse {
+  entries: AppliedFixEntry[];
+  current_system_hash: string;
+}
