@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { normalizeScan, computeScore, fetchScan, fetchLastReport, fetchAppliedFixes, applyRemediation } from "../api";
+import { normalizeScan, computeScore, fetchScan, fetchLastReport, fetchAppliedFixes, applyRemediation, fetchTokenPath } from "../api";
 import type { RawScanResponse } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -272,6 +272,21 @@ describe("applyRemediation", () => {
     expect(headers["X-ClawSec-Token"]).toBe("test-token-xyz");
   });
 
+  it("trims token before sending (avoids paste-with-newline auth failure)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, already_done: false, check_id: "env_gitignore", output: "", exit_code: 0, duration_ms: 5 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await applyRemediation("env_gitignore", "  my-token-abc  \n");
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Record<string, string>;
+    expect(headers["X-ClawSec-Token"]).toBe("my-token-abc");
+  });
+
   it("does NOT send X-ClawSec-Token when no token", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -305,6 +320,21 @@ describe("applyRemediation", () => {
     await expect(applyRemediation("invalid_check", "token")).rejects.toThrow("checkId not in allowlist");
   });
 
+  it("does not send header when token is empty or whitespace-only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, already_done: false, check_id: "env_gitignore", output: "", exit_code: 0, duration_ms: 5 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await applyRemediation("env_gitignore", "   ");
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = (options.headers as Record<string, string>) || {};
+    expect(headers["X-ClawSec-Token"]).toBeUndefined();
+  });
+
   it("uses POST method", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -317,6 +347,26 @@ describe("applyRemediation", () => {
 
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(options.method).toBe("POST");
+  });
+});
+
+// ─── fetchTokenPath ───────────────────────────────────────────────────────────
+
+describe("fetchTokenPath", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("returns path and hint on 200", async () => {
+    vi.stubGlobal("fetch", mockFetch(200, { path: "/home/user/.clawsec_token", hint: "Paste contents..." }));
+    const result = await fetchTokenPath();
+    expect(result).not.toBeNull();
+    expect(result?.path).toBe("/home/user/.clawsec_token");
+    expect(result?.hint).toContain("Paste");
+  });
+
+  it("returns null on 404 or error", async () => {
+    vi.stubGlobal("fetch", mockFetch(404, {}));
+    const result = await fetchTokenPath();
+    expect(result).toBeNull();
   });
 });
 

@@ -84,6 +84,8 @@ curl -X POST http://127.0.0.1:3001/api/apply/env_gitignore \
   -H "X-ClawSec-Token: $TOKEN"
 ```
 
+**Dashboard:** Paste the token in Config → Auth token. Token is trimmed automatically; use base or apply token.
+
 **Health check:**
 ```bash
 curl http://127.0.0.1:3001/api/health
@@ -121,6 +123,15 @@ Auth tokens are auto-generated on first start:
 - `~/.openclaw/workspace/clawsec/.clawsec_token.config` (scoped config token)
 
 ---
+
+## Auth flow test
+
+Verify Apply auth (server must be running):
+
+```bash
+python3 scripts/tests/test_apply_auth.py
+# Expected: All auth flow tests passed.
+```
 
 ## Security regression check
 

@@ -20,6 +20,8 @@ build/
 # Local environment (never commit credentials)
 .env
 .env.*
+.clawsec_token
+.clawsec_token.*
 !.env.example
 !.env.template
 !.env.sample

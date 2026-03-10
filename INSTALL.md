@@ -61,6 +61,9 @@ grep -i 'skill' ~/.openclaw/logs/openclaw-$(date +%Y-%m-%d).log | grep -i clawse
 
 # 6. Run first scan
 curl http://127.0.0.1:3001/api/scan | python3 -m json.tool
+
+# 7. Dashboard Apply: paste token from ~/.openclaw/workspace/clawsec/.clawsec_token
+#    into Config tab → Auth token. Token is auto-trimmed (handles paste-with-newline).
 ```
 
 ---

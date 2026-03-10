@@ -181,17 +181,31 @@ export async function fetchHeartbeat(): Promise<HeartbeatResponse | null> {
   }
 }
 
+// ─── fetchTokenPath ───────────────────────────────────────────────────────────
+/** Get the server-side path to the auth token file (for UX hint). No secret exposed. */
+export async function fetchTokenPath(): Promise<{ path: string; hint: string } | null> {
+  try {
+    const res = await fetch(`${BASE}/token-path`);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ path: string; hint: string }>;
+  } catch {
+    return null;
+  }
+}
+
 // ─── applyRemediation ─────────────────────────────────────────────────────────
 /**
  * Trigger remediation via the backend.
  * Requires X-ClawSec-Token for POST /api/apply/ (ASI07).
  * SECURITY: Never log the token value — only the checkId.
+ * Token is trimmed to avoid paste-with-newline auth failures.
  */
 export async function applyRemediation(checkId: string, token = ""): Promise<ApplyResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["X-ClawSec-Token"] = token;
+  const trimmed = (token || "").trim();
+  if (trimmed) headers["X-ClawSec-Token"] = trimmed;
 
-  logger.info("applyRemediation", { checkId });
+  logger.info("applyRemediation", { checkId, hasToken: !!trimmed });
   const res = await fetch(`${BASE}/apply/${checkId}`, { method: "POST", headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: string };

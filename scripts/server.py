@@ -255,9 +255,11 @@ def _require_token(handler_self, required_scope: str) -> bool:
         handler_self.wfile.write(b'{"error":"Too many failed auth attempts"}')
         return False
 
-    auth = handler_self.headers.get("X-ClawSec-Token", "")
+    auth = (handler_self.headers.get("X-ClawSec-Token") or "").strip()
     expected_scope_token = CLAWSEC_TOKENS.get(required_scope, "")
-    ok = hmac.compare_digest(auth, expected_scope_token) or hmac.compare_digest(auth, CLAWSEC_TOKENS["base"])
+    ok = auth and (
+        hmac.compare_digest(auth, expected_scope_token) or hmac.compare_digest(auth, CLAWSEC_TOKENS["base"])
+    )
     if not ok:
         _record_auth_failure(client_ip)
         handler_self.send_response(401)
@@ -394,6 +396,13 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path_parts = parsed.path.strip("/").split("/")
+
+        # GET /api/token-path — returns path to token file (no secret); for dashboard UX
+        if parsed.path == "/api/token-path":
+            return self.send_json(200, {
+                "path": str(TOKEN_FILE),
+                "hint": "Paste the contents of this file into the Dashboard Config tab → Auth token",
+            })
 
         # GET /api/health
         if parsed.path == "/api/health":

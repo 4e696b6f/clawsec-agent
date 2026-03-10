@@ -405,6 +405,9 @@ DASHBOARD_DIR="${INSTALL_DIR}/dashboard"
 
 if [[ -d "$DASHBOARD_DIR" ]]; then
   if command -v npm &>/dev/null; then
+    # Production build: inject API URL so preview/static serve can reach backend
+    API_URL="http://${CLAWSEC_BACKEND_HOST}:${CLAWSEC_BACKEND_PORT}/api"
+    echo "VITE_CLAWSEC_API_URL=${API_URL}" > "${DASHBOARD_DIR}/.env.production.local"
     (cd "$DASHBOARD_DIR" && npm install --silent && npm run build --silent) \
       && ok "Dashboard built: ${DASHBOARD_DIR}/dist" \
       || warn "Dashboard build failed — run manually: cd ${DASHBOARD_DIR} && npm install && npm run build"

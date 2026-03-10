@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   fetchScan, fetchLastReport, fetchHeartbeat, fetchAppliedFixes,
   applyRemediation, computeScore, loadHistory, saveHistory,
+  fetchTokenPath,
 } from "./api";
 import { logger } from "./logger";
 import type { Finding, ScanResult, HeartbeatResponse, DomainStatus, AppliedFixEntry, AppliedFixesResponse } from "./types";
@@ -37,10 +38,10 @@ const saveLocalConfig = (c: ConfigState) => {
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
 };
 const loadToken = (): string => {
-  try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+  try { return (localStorage.getItem(TOKEN_KEY) || "").trim(); } catch { return ""; }
 };
 const saveToken = (t: string) => {
-  try { sessionStorage.setItem(TOKEN_KEY, t); } catch {}
+  try { localStorage.setItem(TOKEN_KEY, (t || "").trim()); } catch {}
 };
 
 // ─── Default state ────────────────────────────────────────────────────────────
@@ -415,6 +416,7 @@ export default function ClawSecDashboard() {
   const [apiConnected, setApiConnected]   = useState(false);
   const [apiError, setApiError]           = useState<string | null>(null);
   const [clawsecToken, setClawsecToken]   = useState<string>(() => loadToken());
+  const [tokenPathHint, setTokenPathHint] = useState<string | null>(null);
 
   const configDefaults: ConfigState = {
     soul: "# SOUL.md — Agent Identity\nName: Kairos\nPurpose: Gateway Coordinator & Personal AI\n\nCore Values:\n- Transparenz über alle Aktionen\n- Minimale Rechte (least privilege)\n- Audit vor Aktion",
@@ -456,6 +458,13 @@ export default function ClawSecDashboard() {
       .then(af => { setAppliedFixes(af); })
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Config tab: fetch token path hint when API connected ───────────────────
+  useEffect(() => {
+    if (tab === "config" && apiConnected && tokenPathHint === null) {
+      fetchTokenPath().then(p => p && setTokenPathHint(p.path));
+    }
+  }, [tab, apiConnected, tokenPathHint]);
 
   // ── Heartbeat polling every 15s ───────────────────────────────────────────
   useEffect(() => {
@@ -970,14 +979,17 @@ export default function ClawSecDashboard() {
                   <div>
                     <div style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 600, marginBottom: "var(--space-1)" }}>Auth token</div>
                     <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10, lineHeight: 1.6 }}>
-                      Required for POST /api/apply/. Stored in session only. Server path: <span style={{ color: "var(--text-secondary)" }}>.clawsec_token</span>
+                      Required for POST /api/apply/. Paste contents of:{" "}
+                      <code style={{ color: "var(--accent-blue)", background: "var(--bg-base)", padding: "1px 4px", borderRadius: 3 }}>
+                        {tokenPathHint ?? ".clawsec_token"}
+                      </code>
                     </div>
                   </div>
                   <input
                     type="password"
-                    placeholder="Paste token…"
+                    placeholder="Paste token from server (cat .clawsec_token)…"
                     value={clawsecToken}
-                    onChange={(e) => { setClawsecToken(e.target.value); saveToken(e.target.value); }}
+                    onChange={(e) => { setClawsecToken(e.target.value); saveToken((e.target.value || "").trim()); }}
                     style={{
                       width: "100%", background: "var(--bg-base)", border: "1px solid var(--border-default)",
                       borderRadius: "var(--radius-sm)", color: "var(--text-secondary)",
