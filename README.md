@@ -137,18 +137,31 @@ Auth tokens are auto-generated on first start:
 
 ---
 
-## Auth flow test
+## Tests
 
-Verify Apply auth (server must be running):
+| Test | Requires | Command |
+|------|----------|---------|
+| Auth flow | Server running | `python3 scripts/tests/test_apply_auth.py` |
+| Plugin config | None | `python3 scripts/tests/test_plugin_config.py` |
+| Policy consistency | None | `python3 scripts/tests/test_policy_consistency.py` |
+| Coordinator (TS) | None | `npm test` |
+| Deployment parity | After `install.sh` | `python3 scripts/tests/check_deployment_parity.py` |
+
+**Auth flow test** (server must be running):
 
 ```bash
 python3 scripts/tests/test_apply_auth.py
 # Expected: All auth flow tests passed.
+# Note: When skipAutoFix is true in openclaw.json, 403 is expected.
 ```
 
-## Security regression check
+**Plugin config** (no server):
 
-Run the policy/allowlist drift check:
+```bash
+python3 scripts/tests/test_plugin_config.py
+```
+
+**Security regression check**:
 
 ```bash
 python3 scripts/tests/test_policy_consistency.py

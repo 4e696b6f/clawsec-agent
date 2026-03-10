@@ -85,18 +85,23 @@ def main() -> int:
         print("[OK] POST /api/apply with bad token → 401")
 
     # 4. POST /api/apply with valid token → 200 (or 504 if script times out; auth passed)
+    #    When skipAutoFix is true in openclaw.json, server returns 403 (expected).
     status, body = request("POST", "/api/apply/env_gitignore", token=token, base=base)
     if status == 401:
         failures.append(f"POST with valid token: got 401 (auth failed) — token mismatch?")
+    elif status == 403 and body.get("error") == "Auto-remediation disabled":
+        print("[OK] POST /api/apply with valid token → 403 (skipAutoFix enabled, expected)")
     elif status not in (200, 504):
         failures.append(f"POST with valid token: expected 200 or 504, got {status} {body}")
     else:
         print(f"[OK] POST /api/apply with valid token → {status} (auth passed)")
 
     # 5. POST with token that has leading/trailing whitespace → 200 or 504 (server trims)
-    status, _ = request("POST", "/api/apply/env_gitignore", token=f"  {token}  \n", base=base)
+    status, body5 = request("POST", "/api/apply/env_gitignore", token=f"  {token}  \n", base=base)
     if status == 401:
         failures.append("POST with trimmed token: got 401 (server should trim)")
+    elif status == 403 and body5.get("error") == "Auto-remediation disabled":
+        print("[OK] POST with whitespace-padded token → 403 (skipAutoFix enabled, auth passed)")
     elif status not in (200, 504):
         failures.append(f"POST with trimmed token: expected 200 or 504, got {status}")
     else:

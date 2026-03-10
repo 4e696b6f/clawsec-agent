@@ -13,7 +13,7 @@ const fs = require("fs") as typeof import("fs");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const path = require("path") as typeof import("path");
 
-import { loadLastReport } from "./coordinator-reports";
+import { loadLastReport, getRiskScore } from "./coordinator-reports";
 import { IMMUTABLE_FILES, MUTATING_TOOL_NAMES } from "./policy";
 
 // Allowed remediation command patterns (cwd may be workspace/clawsec or ~/.openclaw)
@@ -24,26 +24,6 @@ const REMEDIATION_ALLOWED_PATTERNS = [
 ];
 
 const DEFAULT_API = "http://127.0.0.1:3001";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getRiskScore(report: ReturnType<typeof loadLastReport>): number {
-  if (!report) return 0;
-  if (typeof (report as { risk_score?: number }).risk_score === "number") {
-    return (report as { risk_score: number }).risk_score;
-  }
-  const agentResults = (report as { agent_results?: Record<string, { findings?: Array<{ severity: string; status?: string }> }> }).agent_results;
-  if (!agentResults) return 0;
-  const findings = Object.values(agentResults).flatMap((r) => r.findings ?? []);
-  let score = 0;
-  for (const f of findings) {
-    if (f.status === "auto_fixed") continue;
-    if (f.severity === "critical") score += 30;
-    else if (f.severity === "high") score += 15;
-    else if (f.severity === "medium") score += 5;
-  }
-  return Math.min(score, 100);
-}
 
 // ─── OpenClaw Plugin Registration ────────────────────────────────────────────
 //
