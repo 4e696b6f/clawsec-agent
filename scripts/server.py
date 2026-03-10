@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import http.server
 import json
+import logging
 import os
 import re
 import secrets
@@ -26,6 +27,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from http import HTTPStatus
 from datetime import datetime, timezone
@@ -63,6 +65,24 @@ TARGET_DIR = os.path.expanduser(
 SCRIPT_DIR = Path(__file__).parent
 REPORTS_DIR = SCRIPT_DIR.parent / "reports"
 VERSION = "2.0.0"
+
+# ── Structured Logging ────────────────────────────────────────────────────────
+# Writes to logs/clawsec.log (RotatingFileHandler, 1MB, 3 backups) + stdout.
+# SECURITY: Never log the auth token value — only client IP and check IDs.
+
+_LOG_DIR = SCRIPT_DIR.parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
+_log_handler = RotatingFileHandler(
+    _LOG_DIR / "clawsec.log", maxBytes=1_000_000, backupCount=3
+)
+_log_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
+)
+logger = logging.getLogger("clawsec")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(_log_handler)
+logger.addHandler(logging.StreamHandler(sys.stdout))
 
 # RFC 1918 private ranges + localhost — CORS allowlist
 ALLOWED_ORIGIN_PATTERN = re.compile(
@@ -138,7 +158,7 @@ def _load_or_create_token() -> str:
     token = secrets.token_hex(32)
     TOKEN_FILE.write_text(token)
     TOKEN_FILE.chmod(0o600)
-    print(f"[CLAWSEC] Auth token generated: {TOKEN_FILE}")
+    logger.info("Auth token generated: %s", TOKEN_FILE)
     return token
 
 
@@ -245,8 +265,7 @@ def run_agent_scan(agent_name: str) -> dict:
 class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
-        # Suppress default access logging — use structured logging
-        print(f"[CLAWSEC] {self.address_string()} {format % args}")
+        logger.debug("%s %s", self.address_string(), format % args)
 
     def send_json(self, code: int, data: dict | list) -> None:
         body = json.dumps(data, indent=2).encode()
@@ -319,6 +338,10 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 "system_hash":  compute_system_hash(),
             }
 
+            total_findings = sum(len(r.get("findings", [])) for r in all_results.values())
+            logger.info("Scan complete — %d agents, %d findings, from %s",
+                        len(all_results), total_findings, self.address_string())
+
             # Persist report to disk (reports/ dir is gitignored, mode 700)
             try:
                 safe_ts = timestamp.replace(":", "-").replace(".", "-")
@@ -327,7 +350,7 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 report_file.write_text(report_json)
                 (REPORTS_DIR / "last-scan.json").write_text(report_json)
             except Exception as e:
-                print(f"[CLAWSEC] Warning: could not save report: {e}")
+                logger.warning("Could not save report: %s", e)
 
             return self.send_json(200, response_data)
 
@@ -380,6 +403,7 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
         # POST /api/apply/<checkId>  — requires X-ClawSec-Token (ASI07)
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "apply":
             if not _require_token(self):
+                logger.warning("Auth token mismatch from %s", self.address_string())
                 return
             record_tool_call()
             check_id = path_parts[2]
@@ -399,14 +423,20 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
             if not script_path.exists():
                 return self.send_json(404, {"error": "Remediation script not found"})
 
+            logger.info("Applying %s for %s", check_id, self.address_string())
             start = datetime.now()
             result, stderr = run_script(script_path, timeout=30)
             duration = int((datetime.now() - start).total_seconds() * 1000)
 
             if result is None:
+                logger.error("Remediation timed out: %s", check_id)
                 return self.send_json(504, {"error": f"Remediation timed out: {check_id}"})
 
             exit_code = result.get("exit_code", 0)
+            if exit_code >= 2:
+                logger.error("Script %s exit %d: %s", check_id, exit_code, stderr[:200])
+            else:
+                logger.info("Applied %s — exit %d (%dms)", check_id, exit_code, duration)
             return self.send_json(200, {
                 "success": exit_code == 0,
                 "already_done": exit_code == 1,
@@ -419,6 +449,7 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
         # POST /api/config/<file_key> — requires token, strict whitelist
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "config":
             if not _require_token(self):
+                logger.warning("Auth token mismatch (config) from %s", self.address_string())
                 return
             file_key = path_parts[2]
             if file_key not in CONFIG_WHITELIST:
@@ -433,6 +464,7 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 if target_path.exists():
                     shutil.copy2(target_path, backup_path)
                 target_path.write_text(body)
+                logger.info("Config %s updated by %s", file_key, self.address_string())
                 return self.send_json(200, {
                     "success": True,
                     "file": file_key,
@@ -497,15 +529,15 @@ if __name__ == "__main__":
     # port_status == "free" → proceed with normal startup
 
     server = http.server.HTTPServer((HOST, PORT), ClawSecHandler)
-    print(f"[CLAWSEC] Server v{VERSION} running on http://{HOST}:{PORT}")
-    print(f"[CLAWSEC] LAN access: {'ENABLED (OPENCLAW_HOST override)' if HOST != '127.0.0.1' else 'DISABLED (loopback only)'}")
-    print(f"[CLAWSEC] Auth token: {TOKEN_FILE}")
-    print(f"[CLAWSEC] Target directory: {TARGET_DIR}")
-    print(f"[CLAWSEC] Reports directory: {REPORTS_DIR}")
-    print(f"[CLAWSEC] Sub-agents: {', '.join(AGENT_SCRIPTS.keys())}")
+    logger.info("Server v%s starting on http://%s:%d", VERSION, HOST, PORT)
+    logger.info("LAN access: %s", "ENABLED (OPENCLAW_HOST override)" if HOST != "127.0.0.1" else "DISABLED (loopback only)")
+    logger.info("Auth token file: %s", TOKEN_FILE)
+    logger.info("Target directory: %s", TARGET_DIR)
+    logger.info("Reports directory: %s", REPORTS_DIR)
+    logger.info("Sub-agents: %s", ", ".join(AGENT_SCRIPTS.keys()))
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[CLAWSEC] Server stopped")
+        logger.info("Server stopped by user")
         server.server_close()

@@ -2,28 +2,46 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   fetchScan, fetchLastReport, fetchHeartbeat,
   applyRemediation, computeScore, loadHistory, saveHistory,
-} from "./api.js";
+} from "./api";
+import { logger } from "./logger";
+import type { Finding, ScanResult, HeartbeatResponse, DomainStatus } from "./types";
+
+// ─── Local types ───────────────────────────────────────────────────────────────
+type NotifType = "critical" | "warning" | "ok" | "info";
+
+interface Notification {
+  id: number;
+  msg: string;
+  type: NotifType;
+  at: string;
+}
+
+interface ConfigState {
+  soul: string;
+  constraints: string;
+  gateway: string;
+}
 
 // ─── Persistent storage helpers ───────────────────────────────────────────────
 const CONFIG_KEY = "clawsec_config";
 const TOKEN_KEY  = "clawsec_token";
 
-const loadLocalConfig = (defaults) => {
+const loadLocalConfig = (defaults: ConfigState): ConfigState => {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}") }; }
   catch { return defaults; }
 };
-const saveLocalConfig = (c) => {
+const saveLocalConfig = (c: ConfigState) => {
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
 };
-const loadToken = () => {
+const loadToken = (): string => {
   try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
 };
-const saveToken = (t) => {
+const saveToken = (t: string) => {
   try { localStorage.setItem(TOKEN_KEY, t); } catch {}
 };
 
 // ─── Default state ────────────────────────────────────────────────────────────
-const defaultScanResult = {
+const defaultScanResult: ScanResult = {
   scanned_at:         null,
   supervisor_version: "2.0.0",
   system_hash:        "--------",
@@ -40,7 +58,7 @@ const defaultScanResult = {
   pending_approval: [],
 };
 
-const defaultHeartbeat = {
+const defaultHeartbeat: HeartbeatResponse = {
   status:               "active",
   agent_id:             "kairos",
   last_ping:            new Date().toISOString(),
@@ -48,10 +66,13 @@ const defaultHeartbeat = {
   current_skill:        "clawsec",
   memory_used_mb:       0,
   uptime_seconds:       0,
+  system_hash:          "--------",
+  version:              "2.0.0",
 };
 
 // ─── Color system ──────────────────────────────────────────────────────────────
-const SEV = {
+type SevColors = { bg: string; border: string; text: string; glow: string };
+const SEV: Record<string, SevColors> = {
   critical: { bg: "#ff2d2d22", border: "#ff2d2d", text: "#ff6b6b", glow: "#ff2d2d" },
   high:     { bg: "#ff8c0022", border: "#ff8c00", text: "#ffb347", glow: "#ff8c00" },
   medium:   { bg: "#ffd70022", border: "#ffd700", text: "#ffe55c", glow: "#ffd700" },
@@ -62,7 +83,8 @@ const SEV = {
 
 // ─── Subcomponents ─────────────────────────────────────────────────────────────
 
-const GlowDot = ({ color, pulse }) => (
+interface GlowDotProps { color: string; pulse?: boolean; }
+const GlowDot = ({ color, pulse }: GlowDotProps) => (
   <span style={{
     display: "inline-block", width: 8, height: 8, borderRadius: "50%",
     background: color, boxShadow: `0 0 6px ${color}, 0 0 12px ${color}44`,
@@ -71,7 +93,8 @@ const GlowDot = ({ color, pulse }) => (
   }} />
 );
 
-const ScoreArc = ({ score }) => {
+interface ScoreArcProps { score: number; }
+const ScoreArc = ({ score }: ScoreArcProps) => {
   const r = 54, cx = 64, cy = 64;
   const circ = 2 * Math.PI * r;
   const pct = Math.min(score / 100, 1);
@@ -106,11 +129,12 @@ const ScoreArc = ({ score }) => {
   );
 };
 
-const DomainCard = ({ name, data, findings }) => {
+interface DomainCardProps { name: string; data: DomainStatus; findings: Finding[]; }
+const DomainCard = ({ name, data, findings }: DomainCardProps) => {
   const domFindings = findings.filter(f => f.domain === name);
   const ok = data.ok && domFindings.length === 0;
-  const c = ok ? SEV.ok : domFindings[0] ? SEV[domFindings[0].severity] : SEV.medium;
-  const icons = { identity: "⬡", credentials: "⬢", network: "◈", sessions: "◎", config: "⬟" };
+  const c = ok ? SEV.ok : domFindings[0] ? (SEV[domFindings[0].severity] ?? SEV.info) : SEV.medium;
+  const icons: Record<string, string> = { identity: "⬡", credentials: "⬢", network: "◈", sessions: "◎", config: "⬟" };
   return (
     <div style={{
       background: c.bg, border: `1px solid ${c.border}44`, borderRadius: 8,
@@ -130,8 +154,9 @@ const DomainCard = ({ name, data, findings }) => {
   );
 };
 
-const FindingRow = ({ finding, onFix, fixed }) => {
-  const c = SEV[finding.severity] || SEV.info;
+interface FindingRowProps { finding: Finding; onFix: (f: Finding) => void; fixed: boolean; }
+const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
+  const c = SEV[finding.severity] ?? SEV.info;
   return (
     <div style={{
       background: fixed ? "#0a1a0a" : c.bg,
@@ -189,11 +214,12 @@ const FindingRow = ({ finding, onFix, fixed }) => {
   );
 };
 
-const AgentStatusBar = ({ heartbeat, apiConnected }) => {
+interface AgentStatusBarProps { heartbeat: HeartbeatResponse; apiConnected: boolean; }
+const AgentStatusBar = ({ heartbeat, apiConnected }: AgentStatusBarProps) => {
   const isActive = heartbeat.status === "active";
   const c = isActive ? SEV.ok : SEV.high;
   const upHours = Math.floor(heartbeat.uptime_seconds / 3600);
-  const upMins = Math.floor((heartbeat.uptime_seconds % 3600) / 60);
+  const upMins  = Math.floor((heartbeat.uptime_seconds % 3600) / 60);
   return (
     <div style={{
       background: "#0a0a16", border: `1px solid ${c.border}44`,
@@ -236,10 +262,11 @@ const AgentStatusBar = ({ heartbeat, apiConnected }) => {
   );
 };
 
-const ChangelogViewer = ({ entries }) => {
-  const ref = useRef(null);
+interface ChangelogViewerProps { entries: string[]; }
+const ChangelogViewer = ({ entries }: ChangelogViewerProps) => {
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [entries]);
-  const colorLine = (line) => {
+  const colorLine = (line: string): string => {
     if (line.startsWith("##")) return "#7c9fcc";
     if (line.includes("CRITICAL") || line.includes("critical")) return "#ff6b6b";
     if (line.includes("HIGH") || line.includes("high")) return "#ffb347";
@@ -268,7 +295,8 @@ const ChangelogViewer = ({ entries }) => {
   );
 };
 
-const ScoreHistoryChart = ({ history }) => {
+interface ScoreHistoryChartProps { history: number[]; }
+const ScoreHistoryChart = ({ history }: ScoreHistoryChartProps) => {
   const w = 320, h = 80, pad = 10;
   const max = 100, min = 0;
   if (history.length < 2) return (
@@ -302,15 +330,12 @@ const ScoreHistoryChart = ({ history }) => {
   );
 };
 
-const ConfigEditor = ({ title, content, onSave, readOnly }) => {
+interface ConfigEditorProps { title: string; content: string; onSave: (v: string) => void; readOnly: boolean; }
+const ConfigEditor = ({ title, content, onSave, readOnly }: ConfigEditorProps) => {
   const [val, setVal] = useState(content);
   const [saved, setSaved] = useState(false);
   useEffect(() => { setVal(content); }, [content]);
-  const handleSave = () => {
-    onSave(val);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  const handleSave = () => { onSave(val); setSaved(true); setTimeout(() => setSaved(false), 2000); };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -344,7 +369,8 @@ const ConfigEditor = ({ title, content, onSave, readOnly }) => {
   );
 };
 
-const TabBar = ({ tabs, active, onChange }) => (
+interface TabBarProps { tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void; }
+const TabBar = ({ tabs, active, onChange }: TabBarProps) => (
   <div style={{ display: "flex", gap: 2, borderBottom: "1px solid #0f0f1e", marginBottom: 20 }}>
     {tabs.map(tab => (
       <button key={tab.id} onClick={() => onChange(tab.id)} style={{
@@ -359,7 +385,8 @@ const TabBar = ({ tabs, active, onChange }) => (
   </div>
 );
 
-const ScanTriggerButton = ({ scanning, onClick }) => (
+interface ScanTriggerButtonProps { scanning: boolean; onClick: () => void; }
+const ScanTriggerButton = ({ scanning, onClick }: ScanTriggerButtonProps) => (
   <button onClick={onClick} disabled={scanning} style={{
     background: "#0a1628",
     border: `1px solid ${scanning ? "#2a3f5f" : "#4a7fcc"}`,
@@ -378,63 +405,74 @@ const ScanTriggerButton = ({ scanning, onClick }) => (
 
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 export default function ClawSecDashboard() {
-  const [scanResult, setScanResult]     = useState(defaultScanResult);
-  const [heartbeat, setHeartbeat]       = useState(defaultHeartbeat);
-  const [changelog, setChangelog]       = useState([
+  const [scanResult, setScanResult]       = useState<ScanResult>(defaultScanResult);
+  const [heartbeat, setHeartbeat]         = useState<HeartbeatResponse>(defaultHeartbeat);
+  const [changelog, setChangelog]         = useState<string[]>([
     `## [${new Date().toISOString()}] SUPERVISOR_INIT\nseverity: info\ndomain: all\ndetail: ClawSec Dashboard v3 started. Connecting to backend...\naction_taken: awaiting_scan\n---`,
   ]);
-  const [scoreHistory, setScoreHistory] = useState(() => loadHistory());
-  const [scanning, setScanning]         = useState(false);
-  const [tab, setTab]                   = useState("overview");
-  const [fixedIds, setFixedIds]         = useState(new Set());
-  const [notifications, setNotifications] = useState([]);
-  const [paused, setPaused]             = useState(false);
-  const [apiConnected, setApiConnected] = useState(false);
-  const [apiError, setApiError]         = useState(null);
-  const [clawsecToken, setClawsecToken] = useState(() => loadToken());
+  const [scoreHistory, setScoreHistory]   = useState<number[]>(() => loadHistory());
+  const [scanning, setScanning]           = useState(false);
+  const [tab, setTab]                     = useState("overview");
+  const [fixedIds, setFixedIds]           = useState<Set<string>>(new Set());
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [paused, setPaused]               = useState(false);
+  const [apiConnected, setApiConnected]   = useState(false);
+  const [apiError, setApiError]           = useState<string | null>(null);
+  const [clawsecToken, setClawsecToken]   = useState<string>(() => loadToken());
 
-  const configDefaults = {
-    soul: "# SOUL.md — Agent Identity\nName: Kairos\nPurpose: Gateway Coordinator & Personal AI\n\nCore Values:\n- Transparency über alle Aktionen\n- Minimale Rechte (least privilege)\n- Audit vor Aktion",
+  const configDefaults: ConfigState = {
+    soul: "# SOUL.md — Agent Identity\nName: Kairos\nPurpose: Gateway Coordinator & Personal AI\n\nCore Values:\n- Transparenz über alle Aktionen\n- Minimale Rechte (least privilege)\n- Audit vor Aktion",
     constraints: "# CONSTRAINTS.md — Hard Limits\n\n## NEVER\n- SOUL.md überschreiben oder löschen\n- CONSTRAINTS.md modifizieren\n- Credentials in CHANGELOG oder Telegram schreiben\n- Remediationen ohne Supervisor-Approval ausführen",
     gateway: "# GATEWAY.md — Routing & Auth\n\n## Allowed Requestors\n- User (authenticated via session token)\n- ClawSec Supervisor (internal, priority 200)\n\n## Blocked Patterns\n- \"ignore previous\"\n- \"new instructions\"",
   };
-  const [configs, setConfigs] = useState(() => loadLocalConfig(configDefaults));
+  const [configs, setConfigs] = useState<ConfigState>(() => loadLocalConfig(configDefaults));
 
-  const addNotification = useCallback((msg, type = "info") => {
+  const addNotification = useCallback((msg: string, type: NotifType = "info") => {
     const id = Date.now();
     setNotifications(prev => [...prev.slice(-4), { id, msg, type, at: new Date().toLocaleTimeString("de-DE") }]);
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
   }, []);
 
-  const applyNormalizedScan = useCallback((raw) => {
+  const applyNormalizedScan = useCallback((raw: ScanResult | null) => {
     if (!raw) return;
-    // Flatten agent_results → findings with .agent and .domain
-    const AGENT_DOMAIN = {
+    const AGENT_DOMAIN_MAP: Record<string, string> = {
       "clawsec-env":     "credentials",
       "clawsec-perm":    "identity",
       "clawsec-net":     "network",
       "clawsec-session": "sessions",
       "clawsec-config":  "config",
     };
-    const findings = [];
-    const domains  = { identity: { ok: true, duration_ms: 0, scanned: false }, credentials: { ok: true, duration_ms: 0, scanned: false }, network: { ok: true, duration_ms: 0, scanned: false }, sessions: { ok: true, duration_ms: 0, scanned: false }, config: { ok: true, duration_ms: 0, scanned: false } };
+    const findings: Finding[] = [];
+    const domains: ScanResult["domains"] = {
+      identity:    { ok: true, duration_ms: 0, scanned: false },
+      credentials: { ok: true, duration_ms: 0, scanned: false },
+      network:     { ok: true, duration_ms: 0, scanned: false },
+      sessions:    { ok: true, duration_ms: 0, scanned: false },
+      config:      { ok: true, duration_ms: 0, scanned: false },
+    };
 
     for (const [agentName, agentResult] of Object.entries(raw.agent_results || {})) {
-      const domain = AGENT_DOMAIN[agentName] || "config";
+      const domain = AGENT_DOMAIN_MAP[agentName] || "config";
       const dur    = agentResult.scan_duration_ms || 0;
       domains[domain] = { scanned: true, duration_ms: dur, ok: (agentResult.findings || []).length === 0 };
       for (const f of agentResult.findings || []) {
-        findings.push({ ...f, agent: agentName, domain, owasp_llm: f.owasp_llm === "null" ? null : f.owasp_llm, owasp_asi: f.owasp_asi === "null" ? null : f.owasp_asi });
+        findings.push({
+          ...f,
+          agent: agentName,
+          domain,
+          owasp_llm: f.owasp_llm === "null" ? null : f.owasp_llm,
+          owasp_asi: f.owasp_asi === "null" ? null : f.owasp_asi,
+        });
       }
     }
 
-    const applied   = findings.filter(f => f.status === "auto_fixed").map(f => f.id);
-    const pending   = findings.filter(f => f.status === "pending_approval").map(f => f.id);
-    const score     = computeScore(findings.filter(f => f.status !== "auto_fixed"));
+    const applied  = findings.filter(f => f.status === "auto_fixed").map(f => f.id);
+    const pending  = findings.filter(f => f.status === "pending_approval").map(f => f.id);
+    const score    = computeScore(findings.filter(f => f.status !== "auto_fixed"));
 
     setScanResult({
-      scanned_at:         raw.timestamp || new Date().toISOString(),
-      supervisor_version: raw.version || "2.0.0",
+      scanned_at:         raw.scanned_at || new Date().toISOString(),
+      supervisor_version: raw.supervisor_version || "2.0.0",
       system_hash:        raw.system_hash || "--------",
       risk_score:         score,
       findings,
@@ -461,7 +499,8 @@ export default function ClawSecDashboard() {
           }
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        logger.error("Mount: fetchLastReport failed", { error: String(err) });
         setApiError("Backend nicht erreichbar — starte: python3 scripts/server.py");
       });
 
@@ -485,6 +524,7 @@ export default function ClawSecDashboard() {
   const handleManualScan = useCallback(async () => {
     setScanning(true);
     addNotification("Scan gestartet — POST /api/scan...", "info");
+    logger.info("Manual scan triggered");
     try {
       const raw = await fetchScan();
       const result = applyNormalizedScan(raw);
@@ -494,14 +534,16 @@ export default function ClawSecDashboard() {
         const newHistory = [...scoreHistory, result.score].slice(-50);
         setScoreHistory(newHistory);
         saveHistory(newHistory);
-        setFixedIds(new Set()); // reset local fixes on new scan
+        setFixedIds(new Set());
         setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] MANUAL_SCAN\nseverity: info\ndomain: all\ndetail: Scan complete. Score: ${result.score}/100. ${result.findings.length} finding(s).\naction_taken: report_saved\n---`]);
         addNotification(`Scan abgeschlossen. Score: ${result.score}/100 · ${result.findings.length} Findings`, result.score > 50 ? "critical" : result.score > 20 ? "warning" : "ok");
         if (result.findings.some(f => f.severity === "critical")) {
-          addNotification(`⚠ Critical: ${result.findings.find(f => f.severity === "critical")?.id}`, "critical");
+          const critId = result.findings.find(f => f.severity === "critical")?.id ?? "";
+          addNotification(`⚠ Critical: ${critId}`, "critical");
         }
       }
     } catch (err) {
+      logger.error("Manual scan failed", { error: String(err) });
       setApiConnected(false);
       setApiError(String(err));
       addNotification("Scan fehlgeschlagen — Backend nicht erreichbar", "critical");
@@ -511,13 +553,13 @@ export default function ClawSecDashboard() {
   }, [applyNormalizedScan, scoreHistory, addNotification]);
 
   // ── Fix a finding ──────────────────────────────────────────────────────────
-  const handleFix = useCallback(async (finding) => {
+  const handleFix = useCallback(async (finding: Finding) => {
     const tier = finding.remediation_tier;
 
     if (tier === "approval") {
       setFixedIds(prev => new Set([...prev, finding.id]));
       addNotification(`Pending approval: ${finding.id}`, "warning");
-      setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] PENDING_APPROVAL\nseverity: info\ndomain: ${finding.domain}\ndetail: ${finding.id} marked for approval\naction_taken: queued\n---`]);
+      setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] PENDING_APPROVAL\nseverity: info\ndomain: ${finding.domain ?? "unknown"}\ndetail: ${finding.id} marked for approval\naction_taken: queued\n---`]);
       return;
     }
 
@@ -526,9 +568,10 @@ export default function ClawSecDashboard() {
         const res = await applyRemediation(finding.id, clawsecToken);
         setFixedIds(prev => new Set([...prev, finding.id]));
         addNotification(`Remediation applied: ${finding.id}`, "ok");
-        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] AUTO_REMEDIATION\nseverity: info\ndomain: ${finding.domain}\ndetail: ${finding.id} fixed\naction_taken: ${res?.already_done ? "already_done" : "applied"}\n---`]);
+        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] AUTO_REMEDIATION\nseverity: info\ndomain: ${finding.domain ?? "unknown"}\ndetail: ${finding.id} fixed\naction_taken: ${res?.already_done ? "already_done" : "applied"}\n---`]);
       } catch (err) {
         const msg = String(err);
+        logger.error("handleFix failed", { checkId: finding.id, error: msg });
         if (msg.includes("401") || msg.includes("Unauthorized")) {
           addNotification(`Auth required — Token in Config tab eintragen`, "warning");
         } else {
@@ -540,7 +583,7 @@ export default function ClawSecDashboard() {
 
   const visibleFindings = scanResult.findings.filter(f => !fixedIds.has(f.id) && f.status !== "auto_fixed");
   const score           = visibleFindings.length === 0 && scanResult.findings.length === 0 ? 0 : computeScore(visibleFindings);
-  const notifColors     = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
+  const notifColors: Record<NotifType, string> = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
 
   const TABS = [
     { id: "overview",  label: "OVERVIEW" },
@@ -571,10 +614,10 @@ export default function ClawSecDashboard() {
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
           {notifications.map(n => (
             <div key={n.id} style={{
-              background: "#0a0a18", border: `1px solid ${notifColors[n.type] || "#444"}66`,
-              borderLeft: `3px solid ${notifColors[n.type] || "#444"}`,
+              background: "#0a0a18", border: `1px solid ${notifColors[n.type]}66`,
+              borderLeft: `3px solid ${notifColors[n.type]}`,
               borderRadius: "0 6px 6px 0", padding: "8px 14px",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: 11, color: notifColors[n.type] || "#888",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: 11, color: notifColors[n.type],
               boxShadow: "0 4px 20px #00000088", animation: "slideIn 0.3s ease", maxWidth: 320,
             }}>
               <span style={{ color: "#445566", marginRight: 8 }}>{n.at}</span>{n.msg}
@@ -589,7 +632,6 @@ export default function ClawSecDashboard() {
           position: "sticky", top: 0, zIndex: 100,
         }}>
           <div style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", height: 56, gap: 24 }}>
-            {/* Logo */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{
                 width: 32, height: 32,
@@ -606,7 +648,6 @@ export default function ClawSecDashboard() {
               </div>
             </div>
 
-            {/* Status pills */}
             <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0a1020", border: "1px solid #0f2040", borderRadius: 4, padding: "4px 10px" }}>
                 <GlowDot color={paused ? "#ff8c00" : "#00ff88"} pulse={!paused} />
@@ -624,7 +665,6 @@ export default function ClawSecDashboard() {
 
             <div style={{ flex: 1 }} />
 
-            {/* Controls */}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button onClick={() => setPaused(p => !p)} style={{
                 background: "#0a0a18", border: "1px solid #1a2a3a", color: "#667788",
@@ -653,10 +693,7 @@ export default function ClawSecDashboard() {
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "24px 24px" }}>
 
           {/* KPI Strip */}
-          <div style={{
-            display: "grid", gridTemplateColumns: "140px 1fr auto",
-            gap: 16, marginBottom: 24, alignItems: "center",
-          }}>
+          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr auto", gap: 16, marginBottom: 24, alignItems: "center" }}>
             <div style={{ display: "flex", justifyContent: "center" }}>
               <ScoreArc score={score} />
             </div>
@@ -746,7 +783,7 @@ export default function ClawSecDashboard() {
                   {visibleFindings.length} active · {fixedIds.size + scanResult.applied_fixes.length} resolved
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  {["critical", "high", "medium", "low"].map(sev => {
+                  {(["critical", "high", "medium", "low"] as const).map(sev => {
                     const count = visibleFindings.filter(f => f.severity === sev).length;
                     return count > 0 && (
                       <span key={sev} style={{
@@ -769,7 +806,6 @@ export default function ClawSecDashboard() {
               ) : (
                 visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)
               )}
-              {/* Resolved findings (this session) */}
               {fixedIds.size > 0 && (
                 <div style={{ marginTop: 24 }}>
                   <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>RESOLVED THIS SESSION</div>
@@ -797,7 +833,7 @@ export default function ClawSecDashboard() {
               ].map(agent => {
                 const domFindings = visibleFindings.filter(f => f.domain === agent.domain);
                 const ok = domFindings.length === 0;
-                const c = ok ? SEV.ok : SEV[domFindings[0]?.severity || "medium"];
+                const c = ok ? SEV.ok : (SEV[domFindings[0]?.severity || "medium"] ?? SEV.medium);
                 const domData = scanResult.domains[agent.domain];
                 return (
                   <div key={agent.name} style={{ background: "#07070f", border: `1px solid ${c.border}33`, borderRadius: 8, padding: "16px 18px" }}>
@@ -816,7 +852,7 @@ export default function ClawSecDashboard() {
                     {domFindings.length > 0 && (
                       <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {domFindings.map(f => (
-                          <span key={f.id} style={{ background: SEV[f.severity].bg, border: `1px solid ${SEV[f.severity].border}44`, color: SEV[f.severity].text, borderRadius: 3, padding: "1px 7px", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
+                          <span key={f.id} style={{ background: (SEV[f.severity] ?? SEV.info).bg, border: `1px solid ${(SEV[f.severity] ?? SEV.info).border}44`, color: (SEV[f.severity] ?? SEV.info).text, borderRadius: 3, padding: "1px 7px", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
                             {f.id}
                           </span>
                         ))}
@@ -851,18 +887,8 @@ export default function ClawSecDashboard() {
           {/* ══ CONFIG ══ */}
           {tab === "config" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <ConfigEditor
-                title="SOUL.md — Identity Anchor"
-                content={configs.soul}
-                readOnly={true}
-                onSave={() => {}}
-              />
-              <ConfigEditor
-                title="CONSTRAINTS.md — Hard Limits"
-                content={configs.constraints}
-                readOnly={true}
-                onSave={() => {}}
-              />
+              <ConfigEditor title="SOUL.md — Identity Anchor" content={configs.soul} readOnly={true} onSave={() => {}} />
+              <ConfigEditor title="CONSTRAINTS.md — Hard Limits" content={configs.constraints} readOnly={true} onSave={() => {}} />
               <ConfigEditor
                 title="GATEWAY.md — Routing Rules"
                 content={configs.gateway}
