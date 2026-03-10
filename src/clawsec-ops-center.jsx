@@ -1,3 +1,11 @@
+/**
+ * ClawSec Ops Center v2 — legacy demo UI.
+ *
+ * NOTE:
+ * - This component is a self-contained mock/dashboard used for early prototyping.
+ * - The primary, production dashboard is now `dashboard/src/App.tsx` (v3).
+ * - Keep this file for demos and design reference; do not wire new backend features here.
+ */
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Mock Live Data Engine ─────────────────────────────────────────────────────

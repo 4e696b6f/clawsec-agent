@@ -433,70 +433,18 @@ export default function ClawSecDashboard() {
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
   }, []);
 
-  const applyNormalizedScan = useCallback((raw: ScanResult | null) => {
-    if (!raw) return;
-    const AGENT_DOMAIN_MAP: Record<string, string> = {
-      "clawsec-env":     "credentials",
-      "clawsec-perm":    "identity",
-      "clawsec-net":     "network",
-      "clawsec-session": "sessions",
-      "clawsec-config":  "config",
-    };
-    const findings: Finding[] = [];
-    const domains: ScanResult["domains"] = {
-      identity:    { ok: true, duration_ms: 0, scanned: false },
-      credentials: { ok: true, duration_ms: 0, scanned: false },
-      network:     { ok: true, duration_ms: 0, scanned: false },
-      sessions:    { ok: true, duration_ms: 0, scanned: false },
-      config:      { ok: true, duration_ms: 0, scanned: false },
-    };
-
-    for (const [agentName, agentResult] of Object.entries(raw.agent_results || {})) {
-      const domain = AGENT_DOMAIN_MAP[agentName] || "config";
-      const dur    = agentResult.scan_duration_ms || 0;
-      domains[domain] = { scanned: true, duration_ms: dur, ok: (agentResult.findings || []).length === 0 };
-      for (const f of agentResult.findings || []) {
-        findings.push({
-          ...f,
-          agent: agentName,
-          domain,
-          owasp_llm: f.owasp_llm === "null" ? null : f.owasp_llm,
-          owasp_asi: f.owasp_asi === "null" ? null : f.owasp_asi,
-        });
-      }
-    }
-
-    const applied  = findings.filter(f => f.status === "auto_fixed").map(f => f.id);
-    const pending  = findings.filter(f => f.status === "pending_approval").map(f => f.id);
-    const score    = computeScore(findings.filter(f => f.status !== "auto_fixed"));
-
-    setScanResult({
-      scanned_at:         raw.scanned_at || new Date().toISOString(),
-      supervisor_version: raw.supervisor_version || "2.0.0",
-      system_hash:        raw.system_hash || "--------",
-      risk_score:         score,
-      findings,
-      domains,
-      applied_fixes:    applied,
-      pending_approval: pending,
-    });
-    return { score, findings };
-  }, []);
-
   // ── Mount: load last report + heartbeat ───────────────────────────────────
   useEffect(() => {
     fetchLastReport()
       .then(raw => {
         if (raw) {
-          const result = applyNormalizedScan(raw);
-          if (result) {
-            setApiConnected(true);
-            setApiError(null);
-            const newHistory = [...scoreHistory, result.score].slice(-50);
-            setScoreHistory(newHistory);
-            saveHistory(newHistory);
-            setChangelog(prev => [...prev, `## [${new Date().toISOString()}] LAST_REPORT_LOADED\nseverity: info\ndomain: all\ndetail: Loaded last scan. Score: ${result.score}/100. ${result.findings.length} finding(s).\naction_taken: report_applied\n---`]);
-          }
+          setScanResult(raw);
+          setApiConnected(true);
+          setApiError(null);
+          const newHistory = [...scoreHistory, raw.risk_score].slice(-50);
+          setScoreHistory(newHistory);
+          saveHistory(newHistory);
+          setChangelog(prev => [...prev, `## [${new Date().toISOString()}] LAST_REPORT_LOADED\nseverity: info\ndomain: all\ndetail: Loaded last scan. Score: ${raw.risk_score}/100. ${raw.findings.length} finding(s).\naction_taken: report_applied\n---`]);
         }
       })
       .catch((err: unknown) => {
@@ -527,20 +475,21 @@ export default function ClawSecDashboard() {
     logger.info("Manual scan triggered");
     try {
       const raw = await fetchScan();
-      const result = applyNormalizedScan(raw);
-      if (result) {
-        setApiConnected(true);
-        setApiError(null);
-        const newHistory = [...scoreHistory, result.score].slice(-50);
-        setScoreHistory(newHistory);
-        saveHistory(newHistory);
-        setFixedIds(new Set());
-        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] MANUAL_SCAN\nseverity: info\ndomain: all\ndetail: Scan complete. Score: ${result.score}/100. ${result.findings.length} finding(s).\naction_taken: report_saved\n---`]);
-        addNotification(`Scan abgeschlossen. Score: ${result.score}/100 · ${result.findings.length} Findings`, result.score > 50 ? "critical" : result.score > 20 ? "warning" : "ok");
-        if (result.findings.some(f => f.severity === "critical")) {
-          const critId = result.findings.find(f => f.severity === "critical")?.id ?? "";
-          addNotification(`⚠ Critical: ${critId}`, "critical");
-        }
+      setScanResult(raw);
+      setApiConnected(true);
+      setApiError(null);
+      const newHistory = [...scoreHistory, raw.risk_score].slice(-50);
+      setScoreHistory(newHistory);
+      saveHistory(newHistory);
+      setFixedIds(new Set());
+      setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] MANUAL_SCAN\nseverity: info\ndomain: all\ndetail: Scan complete. Score: ${raw.risk_score}/100. ${raw.findings.length} finding(s).\naction_taken: report_saved\n---`]);
+      addNotification(
+        `Scan abgeschlossen. Score: ${raw.risk_score}/100 · ${raw.findings.length} Findings`,
+        raw.risk_score > 50 ? "critical" : raw.risk_score > 20 ? "warning" : "ok",
+      );
+      if (raw.findings.some(f => f.severity === "critical")) {
+        const critId = raw.findings.find(f => f.severity === "critical")?.id ?? "";
+        addNotification(`⚠ Critical: ${critId}`, "critical");
       }
     } catch (err) {
       logger.error("Manual scan failed", { error: String(err) });

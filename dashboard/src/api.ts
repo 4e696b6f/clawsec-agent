@@ -16,7 +16,11 @@ import type {
   HeartbeatResponse, ApplyResponse, ConfigSaveResponse,
 } from "./types";
 
-const BASE = "/api"; // Via Vite proxy in dev, direct in prod
+// Base URL for the ClawSec backend API.
+// In dev, Vite proxies /api → backend; in prod, you can override with VITE_CLAWSEC_API_URL.
+const BASE =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_CLAWSEC_API_URL) ||
+  "/api";
 
 // ─── Agent → Domain mapping ──────────────────────────────────────────────────
 const AGENT_DOMAIN: Record<string, string> = {
