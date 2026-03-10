@@ -83,6 +83,8 @@ For development (live-reload + API proxy):
 npm run dev --prefix dashboard/
 ```
 
+There is no active frontend in `src/` anymore. The canonical UI is `dashboard/`.
+
 ---
 
 ## Installed File Layout
@@ -93,7 +95,9 @@ npm run dev --prefix dashboard/
 │   └── clawsec/                        ← ClawSec runtime root (COPY from repo)
 │       ├── openclaw.plugin.json
 │       ├── src/
-│       │   └── coordinator.ts          ← OpenClaw plugin + coordinator logic
+│       │   ├── coordinator.ts          ← OpenClaw plugin + coordinator logic
+│       │   ├── coordinator-*.ts        ← risk/report/remediation modules
+│       │   └── policy.ts               ← security policy constants
 │       ├── dashboard/
 │       │   ├── src/App.tsx             ← Active dashboard (v3)
 │       │   ├── package.json            ← npm build config
@@ -169,6 +173,12 @@ The dashboard needs to be built first:
 npm install --prefix ~/.openclaw/workspace/clawsec/dashboard/
 npm run build --prefix ~/.openclaw/workspace/clawsec/dashboard/
 npx serve -s ~/.openclaw/workspace/clawsec/dashboard/dist -l 8081
+```
+
+### Verify deployment parity
+After install, verify deployed skills/extension match repo content:
+```bash
+python3 ~/.openclaw/workspace/clawsec/scripts/tests/check_deployment_parity.py
 ```
 
 ---

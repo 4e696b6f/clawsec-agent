@@ -132,6 +132,12 @@ python3 scripts/tests/test_policy_consistency.py
 
 This validates that scanner check IDs, remediation allowlists, and policy tiers stay in sync.
 
+Verify install parity (repo files vs deployed files in `~/.openclaw`):
+
+```bash
+python3 scripts/tests/check_deployment_parity.py
+```
+
 ---
 
 ## Security properties

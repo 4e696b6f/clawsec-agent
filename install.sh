@@ -429,6 +429,24 @@ fi
 
 # ── Step 12: Backend systemd Service (optional, recommended) ─────────────────
 
+step "Deployment parity check..."
+
+PARITY_CHECK_SCRIPT="${INSTALL_DIR}/scripts/tests/check_deployment_parity.py"
+if [[ -f "$PARITY_CHECK_SCRIPT" ]]; then
+  if python3 "$PARITY_CHECK_SCRIPT" --openclaw-home "$OPENCLAW_HOME" >/tmp/clawsec-parity.log 2>&1; then
+    ok "Deployment parity verified (skills + extension files)"
+  else
+    warn "Deployment parity check failed (non-blocking):"
+    while IFS= read -r line; do
+      echo "    $line"
+    done < /tmp/clawsec-parity.log
+  fi
+else
+  skip "Parity check script not found: ${PARITY_CHECK_SCRIPT}"
+fi
+
+# ── Step 13: Backend systemd Service (optional, recommended) ─────────────────
+
 step "Setting up backend systemd service..."
 
 SERVICE_TEMPLATE="${INSTALL_DIR}/install/clawsec.service"
