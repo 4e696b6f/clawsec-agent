@@ -2,15 +2,20 @@ import path = require("path");
 import fs = require("fs");
 import type { ScanReport } from "./coordinator-types";
 
-const CLAWSEC_ROOT = path.resolve(
-  process.env.CLAWSEC_ROOT ||
-  path.join(process.env.HOME || "~", ".openclaw/workspace/clawsec")
-);
+function getReportsDir(customReportDir?: string): string {
+  if (customReportDir) {
+    return path.resolve(customReportDir.replace(/^~/, process.env.HOME || "~"));
+  }
+  const clawsecRoot = path.resolve(
+    process.env.CLAWSEC_ROOT ||
+    path.join(process.env.HOME || "~", ".openclaw/workspace/clawsec")
+  );
+  return path.join(clawsecRoot, "reports");
+}
 
-const REPORTS_DIR = path.join(CLAWSEC_ROOT, "reports");
-
-export function loadLastReport(): ScanReport | null {
-  const lastReportPath = path.join(REPORTS_DIR, "last-scan.json");
+export function loadLastReport(reportDir?: string): ScanReport | null {
+  const reportsDir = getReportsDir(reportDir);
+  const lastReportPath = path.join(reportsDir, "last-scan.json");
   try {
     const raw = fs.readFileSync(lastReportPath, "utf-8");
     return JSON.parse(raw) as ScanReport;
@@ -19,17 +24,18 @@ export function loadLastReport(): ScanReport | null {
   }
 }
 
-export function saveReport(report: ScanReport): void {
-  if (!fs.existsSync(REPORTS_DIR)) {
-    fs.mkdirSync(REPORTS_DIR, { recursive: true });
+export function saveReport(report: ScanReport, reportDir?: string): void {
+  const reportsDir = getReportsDir(reportDir);
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir, { recursive: true });
   }
 
-  const lastReportPath = path.join(REPORTS_DIR, "last-scan.json");
+  const lastReportPath = path.join(reportsDir, "last-scan.json");
   const ts = new Date().toISOString()
     .replace(/[:.]/g, "")
     .replace("T", "_")
     .slice(0, 15);
-  const timestampedPath = path.join(REPORTS_DIR, `scan-${ts}.json`);
+  const timestampedPath = path.join(reportsDir, `scan-${ts}.json`);
 
   const reportJson = JSON.stringify(report, null, 2);
   fs.writeFileSync(lastReportPath, reportJson, "utf-8");

@@ -4,23 +4,21 @@
   "version": "2.0.0",
   "description": "Multi-agent security scanner for OpenClaw. Scans via GET /api/scan. Orchestrates ENV, PERMISSION, NETWORK, SESSION, and CONFIG domains. Dashboard for findings and approval-based remediations.",
   "kind": "extension",
-  "entry": "src/coordinator.ts",
+  "entry": "index.ts",
   "author": "clawsec",
   "hooks": [
     "before_tool_call",
-    "session_start"
-  ],
-  "requiredSkills": [
-    "clawsec-coordinator",
-    "clawsec-env",
-    "clawsec-perm",
-    "clawsec-net",
-    "clawsec-session",
-    "clawsec-config"
+    "session_start",
+    "before_prompt_build"
   ],
   "configSchema": {
     "type": "object",
     "properties": {
+      "apiBaseUrl": {
+        "type": "string",
+        "description": "ClawSec backend URL (server.py)",
+        "default": "http://127.0.0.1:3001"
+      },
       "reportDir": {
         "type": "string",
         "description": "Path to store scan reports",
@@ -28,22 +26,58 @@
       },
       "alertThreshold": {
         "type": "number",
-        "description": "Risk score threshold for Telegram alerts",
+        "description": "Risk score threshold for alerts",
         "default": 50,
         "minimum": 0,
         "maximum": 100
       },
       "heartbeatIntervalSeconds": {
         "type": "number",
-        "description": "Seconds between heartbeat light scans",
+        "description": "Seconds between heartbeat scans (0 = disabled)",
         "default": 3600
       },
       "skipAutoFix": {
         "type": "boolean",
         "description": "Disable all auto-remediations (report only)",
         "default": false
+      },
+      "applyToken": {
+        "type": "string",
+        "description": "Token for clawsec_apply tool (from .clawsec_token.apply)"
       }
     },
     "additionalProperties": false
-  }
+  },
+  "uiHints": {
+    "apiBaseUrl": {
+      "label": "Backend API URL",
+      "placeholder": "http://127.0.0.1:3001"
+    },
+    "reportDir": {
+      "label": "Report directory",
+      "placeholder": "~/.openclaw/workspace/clawsec/reports"
+    },
+    "alertThreshold": {
+      "label": "Alert threshold",
+      "placeholder": "50"
+    },
+    "heartbeatIntervalSeconds": {
+      "label": "Heartbeat interval (seconds, 0=off)"
+    },
+    "skipAutoFix": {
+      "label": "Report only (no auto-fix)"
+    },
+    "applyToken": {
+      "label": "Apply token",
+      "sensitive": true
+    }
+  },
+  "skills": [
+    "skills/clawsec-coordinator",
+    "skills/clawsec-env",
+    "skills/clawsec-perm",
+    "skills/clawsec-net",
+    "skills/clawsec-session",
+    "skills/clawsec-config"
+  ]
 }

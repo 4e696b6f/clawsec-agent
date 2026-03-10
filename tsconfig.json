@@ -3,19 +3,20 @@
     "target": "es2020",
     "module": "commonjs",
     "moduleResolution": "node",
+    "types": ["node"],
     "lib": ["es2020"],
     "strict": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": ".",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["src/coordinator.ts"],
+  "include": ["src/**/*.ts", "index.ts"],
   "exclude": ["node_modules", "dist", "src/clawsec-ops-center.jsx"]
 }

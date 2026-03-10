@@ -1,0 +1,20 @@
+{
+  "name": "clawsec",
+  "version": "2.0.0",
+  "description": "Multi-agent security scanner for OpenClaw",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "tsconfig.json"
+  ],
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -44,11 +44,18 @@ Kairos Coordinator
 git clone https://github.com/4e696b6f/clawsec-agent
 cd clawsec-agent
 
-# Deploy to ~/.openclaw/workspace/clawsec/
+# Full install (workspace + plugin + skills + systemd)
 bash install.sh
 ```
 
-`install.sh` copies all files, sets up systemd services, builds the dashboard, and runs a post-install verification.
+`install.sh` copies all files to `~/.openclaw/workspace/clawsec/`, installs the plugin to `~/.openclaw/extensions/clawsec/`, copies skills, sets up systemd services, and builds the dashboard.
+
+**Plugin-only** (if you already have workspace/scripts elsewhere):
+
+```bash
+openclaw plugins install ./Clawsec2.0
+# Then copy skills and run server.py manually
+```
 
 ---
 
@@ -94,13 +101,19 @@ curl http://127.0.0.1:3001/api/health
 
 ---
 
-## Kairos skill
+## OpenClaw plugin & skill
 
-ClawSec registers as a Kairos skill. Trigger it via chat:
+ClawSec installs as an OpenClaw plugin with bundled skills. Trigger it via chat:
 
 > "security scan" · "sicherheitsscan" · "security check" · "fix security" · "clawsec"
 
-Kairos will run all 5 sub-agents, compute the risk score, and auto-apply Tier 1 fixes.
+**Plugin features:**
+- **Tools:** `clawsec_scan`, `clawsec_apply` (opt-in: add to `agents.list[].tools.allow` or `tools.allow`)
+- **Command:** `/clawsec-scan` — instant scan without AI
+- **CLI:** `openclaw clawsec-scan`, `openclaw clawsec-status`
+- **Gateway RPC:** `clawsec.scan`, `clawsec.status`
+- **Heartbeat:** optional background scans (config: `heartbeatIntervalSeconds`)
+- **Prompt injection:** high risk score injected into agent context when > threshold
 
 ---
 

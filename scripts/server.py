@@ -63,7 +63,29 @@ TARGET_DIR = os.path.expanduser(
     os.environ.get("OPENCLAW_TARGET_DIR", "~/.openclaw")
 )
 SCRIPT_DIR = Path(__file__).parent
-REPORTS_DIR = SCRIPT_DIR.parent / "reports"
+_DEFAULT_REPORTS = SCRIPT_DIR.parent / "reports"
+
+
+def _load_plugin_config() -> dict:
+    """Load plugins.entries.clawsec.config from openclaw.json. ENV overrides."""
+    openclaw_json = Path(TARGET_DIR) / "openclaw.json"
+    if not openclaw_json.exists():
+        return {}
+    try:
+        data = json.loads(openclaw_json.read_text())
+        cfg = (data.get("plugins") or {}).get("entries") or {}
+        return (cfg.get("clawsec") or {}).get("config") or {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+_PLUGIN_CONFIG = _load_plugin_config()
+_REPORTS_DIR_OVERRIDE = _PLUGIN_CONFIG.get("reportDir")
+if _REPORTS_DIR_OVERRIDE:
+    REPORTS_DIR = Path(os.path.expanduser(str(_REPORTS_DIR_OVERRIDE)))
+else:
+    REPORTS_DIR = _DEFAULT_REPORTS
+SKIP_AUTO_FIX = _PLUGIN_CONFIG.get("skipAutoFix") is True
 APPLIED_FIXES_PATH = REPORTS_DIR / "applied-fixes.json"
 VERSION = "2.0.0"
 SCAN_SCHEMA_VERSION = "1.0"
@@ -533,6 +555,11 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
             if not _require_token(self, "apply"):
                 logger.warning("Auth token mismatch from %s", self.address_string())
                 return
+            if SKIP_AUTO_FIX:
+                return self.send_json(403, {
+                    "error": "Auto-remediation disabled",
+                    "hint": "Set plugins.entries.clawsec.config.skipAutoFix to false in openclaw.json",
+                })
             record_tool_call()
             check_id = path_parts[2]
 

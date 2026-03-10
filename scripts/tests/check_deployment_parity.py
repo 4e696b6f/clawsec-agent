@@ -56,15 +56,40 @@ def main() -> int:
     ext_dir = openclaw_home / "extensions" / "clawsec"
     skills_dir = openclaw_home / "skills"
 
-    # Extension files installed by install.sh
+    # Extension files installed by install.sh (supports index.ts + src/ or flat layout)
     extension_pairs = [
-        (ROOT / "src" / "coordinator.ts", ext_dir / "index.ts"),
-        (ROOT / "src" / "coordinator-types.ts", ext_dir / "coordinator-types.ts"),
-        (ROOT / "src" / "coordinator-reports.ts", ext_dir / "coordinator-reports.ts"),
-        (ROOT / "src" / "policy.ts", ext_dir / "policy.ts"),
         (ROOT / "openclaw.plugin.json", ext_dir / "openclaw.plugin.json"),
-        (ROOT / "tsconfig.json", ext_dir / "tsconfig.json"),
     ]
+    # index.ts from root or src/coordinator.ts
+    if (ROOT / "index.ts").exists():
+        extension_pairs.extend([
+            (ROOT / "index.ts", ext_dir / "index.ts"),
+            (ROOT / "src" / "coordinator.ts", ext_dir / "src" / "coordinator.ts"),
+            (ROOT / "src" / "coordinator-types.ts", ext_dir / "src" / "coordinator-types.ts"),
+            (ROOT / "src" / "coordinator-reports.ts", ext_dir / "src" / "coordinator-reports.ts"),
+            (ROOT / "src" / "policy.ts", ext_dir / "src" / "policy.ts"),
+        ])
+    else:
+        extension_pairs.extend([
+            (ROOT / "src" / "coordinator.ts", ext_dir / "index.ts"),
+            (ROOT / "src" / "coordinator-types.ts", ext_dir / "coordinator-types.ts"),
+            (ROOT / "src" / "coordinator-reports.ts", ext_dir / "coordinator-reports.ts"),
+            (ROOT / "src" / "policy.ts", ext_dir / "policy.ts"),
+        ])
+    if (ROOT / "tsconfig.json").exists():
+        extension_pairs.append((ROOT / "tsconfig.json", ext_dir / "tsconfig.json"))
+
+    # Bundled skills in extension (when manifest has "skills")
+    ext_skills = ext_dir / "skills"
+    for skill_name, src in [
+        ("clawsec-coordinator", ROOT / "skills" / "clawsec-coordinator" / "SKILL.md"),
+        ("clawsec-env", choose_skill_source(ROOT / "skills" / "clawsec-env" / "SKILL.md", ROOT / "skills" / "agents" / "env-agent" / "SKILL.md")),
+        ("clawsec-perm", choose_skill_source(ROOT / "skills" / "clawsec-perm" / "SKILL.md", ROOT / "skills" / "agents" / "permission-agent" / "SKILL.md")),
+        ("clawsec-net", choose_skill_source(ROOT / "skills" / "clawsec-net" / "SKILL.md", ROOT / "skills" / "agents" / "network-agent" / "SKILL.md")),
+        ("clawsec-session", choose_skill_source(ROOT / "skills" / "clawsec-session" / "SKILL.md", ROOT / "skills" / "agents" / "session-agent" / "SKILL.md")),
+        ("clawsec-config", choose_skill_source(ROOT / "skills" / "clawsec-config" / "SKILL.md", ROOT / "skills" / "agents" / "config-agent" / "SKILL.md")),
+    ]:
+        extension_pairs.append((src, ext_skills / skill_name / "SKILL.md"))
 
     # Skill mapping mirrors install.sh behavior (canonical source first).
     skill_pairs = [

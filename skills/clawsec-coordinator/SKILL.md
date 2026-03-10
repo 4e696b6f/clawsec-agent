@@ -29,7 +29,11 @@ delegate, aggregate, and decide.
 
 ## Phase 1 — Run Full Scan via ClawSec Backend
 
-**Primary method:** Call the ClawSec backend API to run a full scan across all five domains:
+**Preferred method:** Use the `clawsec_scan` tool if available (no curl/exec needed):
+
+- Call `clawsec_scan` — returns JSON with agent_results and findings.
+
+**Fallback:** Call the ClawSec backend API directly:
 
 ```
 curl -s http://127.0.0.1:3001/api/scan
@@ -84,11 +88,12 @@ After the scan response is received (or on timeout/error):
 ## Phase 3 — Remediation Triage
 
 ### Tier 1: Auto-apply immediately (no user confirmation needed)
-These are additive-only, fully reversible operations:
-- `env_gitignore` → run `scripts/remediation/env_gitignore.sh`
-- `precommit_hook` → run `scripts/remediation/precommit_hook.sh`
-- `breach_notification_procedure` → run `scripts/remediation/breach_notification_procedure.sh`
-- `runtime_package_install` → run `scripts/remediation/runtime_package_install.sh`
+These are additive-only, fully reversible operations. **Preferred:** Use `clawsec_apply` tool with checkId when available.
+
+- `env_gitignore` → `clawsec_apply(checkId: "env_gitignore")` or run `scripts/remediation/env_gitignore.sh`
+- `precommit_hook` → `clawsec_apply(checkId: "precommit_hook")` or run `scripts/remediation/precommit_hook.sh`
+- `breach_notification_procedure` → `clawsec_apply(checkId: "breach_notification_procedure")` or run `scripts/remediation/breach_notification_procedure.sh`
+- `runtime_package_install` → `clawsec_apply(checkId: "runtime_package_install")` or run `scripts/remediation/runtime_package_install.sh`
 - `soul_writable` → run inline: `chmod 444 ~/.openclaw/workspace/SOUL.md`
 
 After each auto-fix: mark as `auto_fixed` in the report.

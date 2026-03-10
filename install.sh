@@ -199,21 +199,43 @@ if [[ -L "${EXTENSION_DIR}/index.ts" ]]; then
   warn "Removed legacy symlink: ${EXTENSION_DIR}/index.ts"
 fi
 
-cp "${INSTALL_DIR}/src/coordinator.ts" "${EXTENSION_DIR}/index.ts"
-ok "Plugin entry: ${EXTENSION_DIR}/index.ts"
-
-# Coordinator runtime imports local modules; copy them alongside index.ts.
-for module_file in \
-  "src/coordinator-types.ts" \
-  "src/coordinator-reports.ts" \
-  "src/policy.ts"; do
-  if [[ -f "${INSTALL_DIR}/${module_file}" ]]; then
-    cp "${INSTALL_DIR}/${module_file}" "${EXTENSION_DIR}/$(basename "${module_file}")"
-    ok "Plugin module: ${EXTENSION_DIR}/$(basename "${module_file}")"
-  else
-    warn "Plugin module missing: ${module_file}"
-  fi
-done
+# Prefer index.ts (plugin entry), fallback to src/coordinator.ts as index
+if [[ -f "${INSTALL_DIR}/index.ts" ]]; then
+  cp "${INSTALL_DIR}/index.ts" "${EXTENSION_DIR}/index.ts"
+  # index.ts requires ./src/coordinator — copy full src/ dir
+  mkdir -p "${EXTENSION_DIR}/src"
+  for f in coordinator.ts coordinator-types.ts coordinator-reports.ts policy.ts; do
+    [[ -f "${INSTALL_DIR}/src/${f}" ]] && cp "${INSTALL_DIR}/src/${f}" "${EXTENSION_DIR}/src/"
+  done
+  # Bundle skills for manifest "skills" (plugin loads from extensions/clawsec/skills/)
+  mkdir -p "${EXTENSION_DIR}/skills"
+  for entry in "${SKILL_MAP[@]}"; do
+    skill_name="${entry%%:*}"
+    skill_src="${entry#*:}"
+    src_file="${INSTALL_DIR}/${skill_src}"
+    if [[ -f "$src_file" ]]; then
+      mkdir -p "${EXTENSION_DIR}/skills/${skill_name}"
+      cp "$src_file" "${EXTENSION_DIR}/skills/${skill_name}/SKILL.md"
+    fi
+  done
+  # Fallback for skills not in SKILL_MAP (legacy agents/)
+  for entry in "${SKILL_MAP_LEGACY[@]}"; do
+    skill_name="${entry%%:*}"
+    skill_src="${entry#*:}"
+    if [[ ! -f "${EXTENSION_DIR}/skills/${skill_name}/SKILL.md" ]] && [[ -f "${INSTALL_DIR}/${skill_src}" ]]; then
+      mkdir -p "${EXTENSION_DIR}/skills/${skill_name}"
+      cp "${INSTALL_DIR}/${skill_src}" "${EXTENSION_DIR}/skills/${skill_name}/SKILL.md"
+    fi
+  done
+  ok "Plugin skills bundled: ${EXTENSION_DIR}/skills/"
+  ok "Plugin entry: ${EXTENSION_DIR}/index.ts (with src/)"
+else
+  cp "${INSTALL_DIR}/src/coordinator.ts" "${EXTENSION_DIR}/index.ts"
+  for module_file in coordinator-types.ts coordinator-reports.ts policy.ts; do
+    [[ -f "${INSTALL_DIR}/src/${module_file}" ]] && cp "${INSTALL_DIR}/src/${module_file}" "${EXTENSION_DIR}/"
+  done
+  ok "Plugin entry: ${EXTENSION_DIR}/index.ts (flat)"
+fi
 
 cp "${INSTALL_DIR}/openclaw.plugin.json" "${EXTENSION_DIR}/openclaw.plugin.json"
 ok "Plugin manifest: ${EXTENSION_DIR}/openclaw.plugin.json"
@@ -562,7 +584,7 @@ echo "       grep -i 'clawsec' ~/.openclaw/logs/openclaw-\$(date +%Y-%m-%d).log"
 echo "       # Expected: [CLAWSEC] ClawSec 2.0 plugin registered"
 echo ""
 echo "  5. Trigger first security scan:"
-echo "       Say: \"security scan\" to your Kairos agent"
+echo "       Say: \"security scan\" to your OpenClaw agent"
 echo "       OR:  curl http://127.0.0.1:${CLAWSEC_BACKEND_PORT}/api/scan | python3 -m json.tool"
 echo ""
 echo "  6. Dashboard (auto-built during install, or manually):"
