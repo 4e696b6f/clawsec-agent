@@ -6,6 +6,7 @@ import type { RawScanResponse } from "../types";
 
 function buildRaw(overrides: Partial<RawScanResponse> = {}): RawScanResponse {
   return {
+    schema_version: "1.0",
     timestamp: "2026-01-01T00:00:00.000Z",
     version: "2.0.0",
     system_hash: "abc12345",
@@ -30,8 +31,14 @@ describe("normalizeScan", () => {
     const result = normalizeScan(buildRaw());
     expect(result.findings).toHaveLength(0);
     expect(result.risk_score).toBe(0);
+    expect(result.schema_version).toBe("1.0");
     expect(result.system_hash).toBe("abc12345");
     expect(result.supervisor_version).toBe("2.0.0");
+  });
+
+  it("uses scanned_at when provided by backend", () => {
+    const result = normalizeScan(buildRaw({ scanned_at: "2026-01-01T00:00:30.000Z" }));
+    expect(result.scanned_at).toBe("2026-01-01T00:00:30.000Z");
   });
 
   it("flattens findings from all agents", () => {

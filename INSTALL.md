@@ -70,17 +70,17 @@ curl http://127.0.0.1:3001/api/scan | python3 -m json.tool
 cd ~/.openclaw/workspace/clawsec
 
 # Install dependencies and build
-npm install --prefix src/
-npm run build --prefix src/
+npm install --prefix dashboard/
+npm run build --prefix dashboard/
 
 # Serve
-npx serve -s src/dist -l 8081
+npx serve -s dashboard/dist -l 8081
 # Dashboard: http://localhost:8081
 ```
 
 For development (live-reload + API proxy):
 ```bash
-npm run dev --prefix src/
+npm run dev --prefix dashboard/
 ```
 
 ---
@@ -93,12 +93,11 @@ npm run dev --prefix src/
 │   └── clawsec/                        ← ClawSec runtime root (COPY from repo)
 │       ├── openclaw.plugin.json
 │       ├── src/
-│       │   ├── coordinator.ts          ← OpenClaw plugin + coordinator logic
-│       │   ├── clawsec-ops-center.jsx  ← Dashboard React component
-│       │   ├── main.jsx                ← Vite entry point
-│       │   ├── index.html              ← Vite HTML template
+│       │   └── coordinator.ts          ← OpenClaw plugin + coordinator logic
+│       ├── dashboard/
+│       │   ├── src/App.tsx             ← Active dashboard (v3)
 │       │   ├── package.json            ← npm build config
-│       │   └── vite.config.js
+│       │   └── vite.config.ts
 │       ├── scripts/
 │       │   ├── scan-environment.sh     ← Unified 5-domain scanner
 │       │   ├── server.py               ← HTTP backend (127.0.0.1:3001)
@@ -167,9 +166,9 @@ python3 ~/.openclaw/workspace/clawsec/scripts/server.py &
 ### Dashboard shows 404
 The dashboard needs to be built first:
 ```bash
-npm install --prefix ~/.openclaw/workspace/clawsec/src/
-npm run build --prefix ~/.openclaw/workspace/clawsec/src/
-npx serve -s ~/.openclaw/workspace/clawsec/src/dist -l 8081
+npm install --prefix ~/.openclaw/workspace/clawsec/dashboard/
+npm run build --prefix ~/.openclaw/workspace/clawsec/dashboard/
+npx serve -s ~/.openclaw/workspace/clawsec/dashboard/dist -l 8081
 ```
 
 ---

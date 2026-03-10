@@ -30,7 +30,9 @@ export interface AgentResult {
 
 /** Raw JSON returned by GET /api/scan and GET /api/last-report */
 export interface RawScanResponse {
+  schema_version?: string;
   timestamp: string;
+  scanned_at?: string;
   version: string;
   system_hash: string;
   agent_results: Record<string, AgentResult>;
@@ -45,6 +47,7 @@ export interface DomainStatus {
 
 /** Normalized scan result used throughout the dashboard */
 export interface ScanResult {
+  schema_version?: string;
   scanned_at: string | null;
   supervisor_version: string;
   system_hash: string;

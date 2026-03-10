@@ -65,6 +65,7 @@ TARGET_DIR = os.path.expanduser(
 SCRIPT_DIR = Path(__file__).parent
 REPORTS_DIR = SCRIPT_DIR.parent / "reports"
 VERSION = "2.0.0"
+SCAN_SCHEMA_VERSION = "1.0"
 
 # ── Structured Logging ────────────────────────────────────────────────────────
 # Writes to logs/clawsec.log (RotatingFileHandler, 1MB, 3 backups) + stdout.
@@ -84,14 +85,17 @@ logger.setLevel(logging.DEBUG)
 logger.addHandler(_log_handler)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 
-# RFC 1918 private ranges + localhost — CORS allowlist
-ALLOWED_ORIGIN_PATTERN = re.compile(
-    r"^https?://(localhost|127\.0\.0\.1|"
-    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
-    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|"
-    r"192\.168\.\d{1,3}\.\d{1,3})"
-    r"(:\d+)?$"
-)
+# Explicit trusted origins only (local profile by default).
+TRUSTED_ORIGINS = {
+    "http://127.0.0.1:8081",
+    "http://localhost:8081",
+}
+EXTRA_TRUSTED_ORIGINS = {
+    o.strip()
+    for o in os.environ.get("CLAWSEC_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+}
+TRUSTED_ORIGINS |= EXTRA_TRUSTED_ORIGINS
 
 # Sub-agent scan scripts (each agent has its own isolated script)
 AGENT_SCRIPTS: dict[str, str] = {
@@ -124,6 +128,9 @@ CONFIG_WHITELIST: dict[str, str] = {
     "gateway":     "workspace/GATEWAY.md",
 }
 CONFIG_MAX_BYTES = 65_536  # 64KB max per config file
+IMMUTABLE_CONFIG_KEYS = {"soul", "constraints"}
+
+CHECK_ID_RE = re.compile(r"^[a-z_]{1,64}$")
 
 
 def compute_system_hash() -> str:
@@ -149,38 +156,92 @@ def compute_system_hash() -> str:
 # Read-only endpoints (health, scan, reports) remain open — no secrets exposed.
 
 TOKEN_FILE = SCRIPT_DIR.parent / ".clawsec_token"
+APPLY_TOKEN_FILE = SCRIPT_DIR.parent / ".clawsec_token.apply"
+CONFIG_TOKEN_FILE = SCRIPT_DIR.parent / ".clawsec_token.config"
 
 
-def _load_or_create_token() -> str:
-    """Load token from file or generate a new one with chmod 600."""
+def _derive_scoped_token(base_token: str, scope: str) -> str:
+    return hmac.new(base_token.encode(), scope.encode(), hashlib.sha256).hexdigest()
+
+
+def _load_or_create_tokens() -> dict[str, str]:
+    """Load or create base/scoped tokens with chmod 600."""
     if TOKEN_FILE.exists():
-        return TOKEN_FILE.read_text().strip()
-    token = secrets.token_hex(32)
-    TOKEN_FILE.write_text(token)
-    TOKEN_FILE.chmod(0o600)
-    logger.info("Auth token generated: %s", TOKEN_FILE)
-    return token
+        base_token = TOKEN_FILE.read_text().strip()
+    else:
+        base_token = secrets.token_hex(32)
+        TOKEN_FILE.write_text(base_token)
+        TOKEN_FILE.chmod(0o600)
+        logger.info("Auth token generated: %s", TOKEN_FILE)
+
+    apply_token = _derive_scoped_token(base_token, "apply")
+    config_token = _derive_scoped_token(base_token, "config")
+    APPLY_TOKEN_FILE.write_text(apply_token)
+    APPLY_TOKEN_FILE.chmod(0o600)
+    CONFIG_TOKEN_FILE.write_text(config_token)
+    CONFIG_TOKEN_FILE.chmod(0o600)
+    return {
+        "base": base_token,
+        "apply": apply_token,
+        "config": config_token,
+    }
 
 
-CLAWSEC_TOKEN = _load_or_create_token()
+CLAWSEC_TOKENS = _load_or_create_tokens()
+
+FAILED_AUTH_ATTEMPTS: dict[str, collections.deque] = {}
+AUTH_WINDOW_SECONDS = 60
+AUTH_MAX_ATTEMPTS = 10
 
 
-def _require_token(handler_self) -> bool:
-    """Check X-ClawSec-Token header. Sends 401 and returns False if unauthorized."""
+def _auth_throttled(client_ip: str) -> bool:
+    now = time.time()
+    q = FAILED_AUTH_ATTEMPTS.setdefault(client_ip, collections.deque())
+    while q and q[0] < now - AUTH_WINDOW_SECONDS:
+        q.popleft()
+    return len(q) >= AUTH_MAX_ATTEMPTS
+
+
+def _record_auth_failure(client_ip: str) -> None:
+    FAILED_AUTH_ATTEMPTS.setdefault(client_ip, collections.deque()).append(time.time())
+
+
+def audit_event(event_type: str, **payload) -> None:
+    logger.info(json.dumps({
+        "event_type": event_type,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        **payload,
+    }, separators=(",", ":")))
+
+
+def _require_token(handler_self, required_scope: str) -> bool:
+    """Check X-ClawSec-Token header with scope-aware validation + throttling."""
+    client_ip = handler_self.address_string()
+    if _auth_throttled(client_ip):
+        handler_self.send_response(429)
+        handler_self.send_header("Content-Type", "application/json")
+        handler_self.send_header("X-Content-Type-Options", "nosniff")
+        handler_self.end_headers()
+        handler_self.wfile.write(b'{"error":"Too many failed auth attempts"}')
+        return False
+
     auth = handler_self.headers.get("X-ClawSec-Token", "")
-    if not hmac.compare_digest(auth, CLAWSEC_TOKEN):
+    expected_scope_token = CLAWSEC_TOKENS.get(required_scope, "")
+    ok = hmac.compare_digest(auth, expected_scope_token) or hmac.compare_digest(auth, CLAWSEC_TOKENS["base"])
+    if not ok:
+        _record_auth_failure(client_ip)
         handler_self.send_response(401)
         handler_self.send_header("Content-Type", "application/json")
         handler_self.send_header("X-Content-Type-Options", "nosniff")
         handler_self.end_headers()
-        handler_self.wfile.write(b'{"error": "Unauthorized"}')
+        handler_self.wfile.write(b'{"error":"Unauthorized"}')
         return False
     return True
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def cors_headers(origin: str) -> dict:
-    if ALLOWED_ORIGIN_PATTERN.match(origin):
+    if origin in TRUSTED_ORIGINS:
         return {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -218,6 +279,17 @@ def run_script(script_path: Path, timeout: int = 30) -> tuple[dict | None, str]:
         return None, f"Script timed out after {timeout}s"
     except Exception as e:
         return None, str(e)
+
+
+def parse_json_body(handler_self, max_bytes: int = CONFIG_MAX_BYTES) -> tuple[dict | None, str | None]:
+    length = int(handler_self.headers.get("Content-Length", 0))
+    if length > max_bytes:
+        return None, "Content too large"
+    raw = handler_self.rfile.read(length).decode("utf-8", errors="replace")
+    try:
+        return json.loads(raw), None
+    except json.JSONDecodeError:
+        return None, "Invalid JSON body"
 
 
 def run_agent_scan(agent_name: str) -> dict:
@@ -332,7 +404,9 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             response_data = {
+                "schema_version": SCAN_SCHEMA_VERSION,
                 "timestamp":    timestamp,
+                "scanned_at":   timestamp,
                 "agent_results": all_results,
                 "version":      VERSION,
                 "system_hash":  compute_system_hash(),
@@ -341,6 +415,13 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
             total_findings = sum(len(r.get("findings", [])) for r in all_results.values())
             logger.info("Scan complete — %d agents, %d findings, from %s",
                         len(all_results), total_findings, self.address_string())
+            audit_event(
+                "scan_completed",
+                client_ip=self.address_string(),
+                findings=total_findings,
+                agents=len(all_results),
+                schema_version=SCAN_SCHEMA_VERSION,
+            )
 
             # Persist report to disk (reports/ dir is gitignored, mode 700)
             try:
@@ -402,14 +483,14 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
         # POST /api/apply/<checkId>  — requires X-ClawSec-Token (ASI07)
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "apply":
-            if not _require_token(self):
+            if not _require_token(self, "apply"):
                 logger.warning("Auth token mismatch from %s", self.address_string())
                 return
             record_tool_call()
             check_id = path_parts[2]
 
             # Validate checkId: alphanumeric + underscore, max 64 chars
-            if not re.match(r"^[a-z_]{1,64}$", check_id):
+            if not CHECK_ID_RE.match(check_id):
                 return self.send_json(400, {"error": "Invalid checkId format"})
 
             # Validate against explicit allowlist
@@ -437,6 +518,15 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
                 logger.error("Script %s exit %d: %s", check_id, exit_code, stderr[:200])
             else:
                 logger.info("Applied %s — exit %d (%dms)", check_id, exit_code, duration)
+            audit_event(
+                "remediation_applied",
+                client_ip=self.address_string(),
+                check_id=check_id,
+                success=(exit_code == 0),
+                already_done=(exit_code == 1),
+                exit_code=exit_code,
+                duration_ms=duration,
+            )
             return self.send_json(200, {
                 "success": exit_code == 0,
                 "already_done": exit_code == 1,
@@ -448,23 +538,36 @@ class ClawSecHandler(http.server.BaseHTTPRequestHandler):
 
         # POST /api/config/<file_key> — requires token, strict whitelist
         if len(path_parts) == 3 and path_parts[0] == "api" and path_parts[1] == "config":
-            if not _require_token(self):
+            if not _require_token(self, "config"):
                 logger.warning("Auth token mismatch (config) from %s", self.address_string())
                 return
             file_key = path_parts[2]
             if file_key not in CONFIG_WHITELIST:
                 return self.send_json(400, {"error": f"Not editable: {file_key}"})
-            length = int(self.headers.get("Content-Length", 0))
-            if length > CONFIG_MAX_BYTES:
-                return self.send_json(413, {"error": "Content too large"})
-            body = self.rfile.read(length).decode("utf-8", errors="replace")
+            if file_key in IMMUTABLE_CONFIG_KEYS:
+                return self.send_json(403, {
+                    "error": f"{file_key} is immutable by policy",
+                    "hint": "SOUL.md and CONSTRAINTS.md are intentionally write-protected",
+                })
+            payload, parse_error = parse_json_body(self, max_bytes=CONFIG_MAX_BYTES)
+            if parse_error == "Content too large":
+                return self.send_json(413, {"error": parse_error})
+            if parse_error:
+                return self.send_json(400, {"error": parse_error})
+            content = str((payload or {}).get("content", ""))
             target_path = Path(TARGET_DIR) / CONFIG_WHITELIST[file_key]
             backup_path = target_path.with_suffix(target_path.suffix + ".bak")
             try:
                 if target_path.exists():
                     shutil.copy2(target_path, backup_path)
-                target_path.write_text(body)
+                target_path.write_text(content)
                 logger.info("Config %s updated by %s", file_key, self.address_string())
+                audit_event(
+                    "config_updated",
+                    client_ip=self.address_string(),
+                    file_key=file_key,
+                    bytes=len(content.encode("utf-8")),
+                )
                 return self.send_json(200, {
                     "success": True,
                     "file": file_key,
@@ -532,6 +635,8 @@ if __name__ == "__main__":
     logger.info("Server v%s starting on http://%s:%d", VERSION, HOST, PORT)
     logger.info("LAN access: %s", "ENABLED (OPENCLAW_HOST override)" if HOST != "127.0.0.1" else "DISABLED (loopback only)")
     logger.info("Auth token file: %s", TOKEN_FILE)
+    logger.info("Scoped token files: %s, %s", APPLY_TOKEN_FILE, CONFIG_TOKEN_FILE)
+    logger.info("Trusted origins: %s", ", ".join(sorted(TRUSTED_ORIGINS)) if TRUSTED_ORIGINS else "(none)")
     logger.info("Target directory: %s", TARGET_DIR)
     logger.info("Reports directory: %s", REPORTS_DIR)
     logger.info("Sub-agents: %s", ", ".join(AGENT_SCRIPTS.keys()))

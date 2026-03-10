@@ -7,7 +7,7 @@ description: >
   "sicherheitsscan", "security check", or "fix security".
 version: 2.0.0
 author: clawsec
-compatibility: exec, read, write, edit, message, subagent
+compatibility: exec, read, message, subagent
 triggers:
   - "security scan"
   - "sicherheitsscan"

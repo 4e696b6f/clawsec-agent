@@ -8,7 +8,7 @@ Autonomous multi-agent security scanner for **OpenClaw** (Claude-based agent run
 
 ## What it does
 
-ClawSec runs 5 isolated security sub-agents in parallel, maps every finding to [OWASP LLM Top 10 v2.0](https://owasp.org/www-project-top-10-for-large-language-model-applications/) and [OWASP ASI 2025](https://owasp.org/www-project-autonomous-agent-security-initiative/), auto-applies safe remediations, and sends Telegram alerts.
+ClawSec runs 5 isolated security sub-agents in parallel, maps every finding to [OWASP LLM Top 10 v2.0](https://owasp.org/www-project-top-10-for-large-language-model-applications/) and [OWASP ASI 2025](https://owasp.org/www-project-autonomous-agent-security-initiative/), and auto-applies safe remediations.
 
 ```
 Kairos Coordinator
@@ -34,7 +34,7 @@ Kairos Coordinator
 - Python 3.10+
 - Node.js 18+ and npm (for dashboard)
 - OpenClaw installed at `~/.openclaw`
-- Optional: Telegram bot for alerts (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
+- Optional: external notifier integration (Telegram or other channels can be added in your deployment)
 
 ---
 
@@ -98,7 +98,7 @@ ClawSec registers as a Kairos skill. Trigger it via chat:
 
 > "security scan" · "sicherheitsscan" · "security check" · "fix security" · "clawsec"
 
-Kairos will run all 5 sub-agents, compute the risk score, auto-apply Tier 1 fixes, and send a Telegram alert if the score exceeds 50 or any critical finding is detected.
+Kairos will run all 5 sub-agents, compute the risk score, and auto-apply Tier 1 fixes.
 
 ---
 
@@ -115,14 +115,29 @@ Kairos will run all 5 sub-agents, compute the risk score, auto-apply Tier 1 fixe
 | `/api/apply/<id>` | POST | Apply remediation (token required) |
 | `/api/config/<key>` | POST | Edit config file (token required) |
 
-Auth token is auto-generated at `~/.openclaw/workspace/clawsec/.clawsec_token` on first start.
+Auth tokens are auto-generated on first start:
+- `~/.openclaw/workspace/clawsec/.clawsec_token` (base token)
+- `~/.openclaw/workspace/clawsec/.clawsec_token.apply` (scoped apply token)
+- `~/.openclaw/workspace/clawsec/.clawsec_token.config` (scoped config token)
+
+---
+
+## Security regression check
+
+Run the policy/allowlist drift check:
+
+```bash
+python3 scripts/tests/test_policy_consistency.py
+```
+
+This validates that scanner check IDs, remediation allowlists, and policy tiers stay in sync.
 
 ---
 
 ## Security properties
 
 - Backend binds to `127.0.0.1` only — no LAN exposure by default
-- CORS restricted to RFC 1918 IPs + localhost
+- CORS restricted to explicit trusted origins (`http://127.0.0.1:8081`, `http://localhost:8081` by default)
 - All `subprocess` calls use `shell=False`
 - `checkId` validated against regex `^[a-z_]{1,64}$` + explicit allowlist
 - `reports/` is gitignored and created with `chmod 700`

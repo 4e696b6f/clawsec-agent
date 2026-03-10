@@ -87,7 +87,8 @@ export function normalizeScan(raw: RawScanResponse): ScanResult {
   const pendingApproval = allFindings.filter(f => f.status === "pending_approval").map(f => f.id);
 
   return {
-    scanned_at:         raw.timestamp || new Date().toISOString(),
+    schema_version:     raw.schema_version || "1.0",
+    scanned_at:         raw.scanned_at || raw.timestamp || new Date().toISOString(),
     supervisor_version: raw.version   || "2.0.0",
     system_hash:        raw.system_hash || "--------",
     risk_score:         computeScore(allFindings),

@@ -34,10 +34,10 @@ const saveLocalConfig = (c: ConfigState) => {
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
 };
 const loadToken = (): string => {
-  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+  try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
 };
 const saveToken = (t: string) => {
-  try { localStorage.setItem(TOKEN_KEY, t); } catch {}
+  try { sessionStorage.setItem(TOKEN_KEY, t); } catch {}
 };
 
 // ─── Default state ────────────────────────────────────────────────────────────
@@ -499,7 +499,7 @@ export default function ClawSecDashboard() {
     } finally {
       setScanning(false);
     }
-  }, [applyNormalizedScan, scoreHistory, addNotification]);
+  }, [scoreHistory, addNotification]);
 
   // ── Fix a finding ──────────────────────────────────────────────────────────
   const handleFix = useCallback(async (finding: Finding) => {
@@ -853,6 +853,7 @@ export default function ClawSecDashboard() {
                 <div style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1, marginBottom: 12 }}>AUTH TOKEN</div>
                 <div style={{ color: "#556677", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
                   Für POST /api/apply/ (Auto-Fix) wird der ClawSec-Token benötigt.
+                  <br />Token wird nur für die aktuelle Browser-Session gespeichert.
                   <br />Token liegt auf dem Server unter: <span style={{ color: "#334455" }}>.clawsec_token</span>
                 </div>
                 <input
