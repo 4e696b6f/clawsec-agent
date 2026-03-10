@@ -249,35 +249,35 @@ const FindingRow = ({ finding, onFix, onReApply, fixed, appliedFixStatus = "none
 
 // AgentStatusBar removed — replaced by AgentHierarchy
 
-interface ChangelogViewerProps { entries: string[]; }
-const ChangelogViewer = ({ entries }: ChangelogViewerProps) => {
+interface ChangelogViewerProps { entries: string[]; height?: number; }
+const ChangelogViewer = ({ entries, height = 220 }: ChangelogViewerProps) => {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [entries]);
   const colorLine = (line: string): string => {
-    if (line.startsWith("##")) return "#7c9fcc";
-    if (line.includes("CRITICAL") || line.includes("critical")) return "#ff6b6b";
-    if (line.includes("HIGH") || line.includes("high")) return "#ffb347";
-    if (line.includes("WARN") || line.includes("medium")) return "#ffe55c";
-    if (line.includes("---")) return "#333";
-    if (line.match(/^(severity|domain|detail|action_taken|requires_review):/)) return "#778899";
-    return "#8899aa";
+    if (line.startsWith("##")) return "var(--accent-blue)";
+    if (line.includes("CRITICAL") || line.includes("critical")) return "var(--sev-critical-text)";
+    if (line.includes("HIGH") || line.includes("high")) return "var(--sev-high-text)";
+    if (line.includes("WARN") || line.includes("medium")) return "var(--sev-medium-text)";
+    if (line.includes("---")) return "var(--border-default)";
+    if (line.match(/^(severity|domain|detail|action_taken|requires_review):/)) return "var(--text-muted)";
+    return "var(--text-secondary)";
   };
   return (
     <div ref={ref} style={{
-      background: "var(--bg-base,#0d0d14)", borderRadius: "var(--radius-sm)", padding: "var(--space-2) var(--space-3)",
-      height: 180, overflowY: "auto", fontFamily: "var(--font-mono)",
-      fontSize: 10, lineHeight: 1.6,
+      background: "var(--bg-base)", borderRadius: "var(--radius-sm)", padding: "var(--space-3) var(--space-4)",
+      height, overflowY: "auto", fontFamily: "var(--font-mono)",
+      fontSize: 11, lineHeight: 1.7, letterSpacing: 0.3,
     }}>
       {entries.map((entry, i) => (
-        <div key={i}>
+        <div key={i} style={{ marginBottom: "var(--space-2)" }}>
           {entry.split("\n").map((line, j) => (
-            <div key={j} style={{ color: colorLine(line), opacity: i === entries.length - 1 ? 1 : 0.7 + (i / entries.length) * 0.3 }}>
+            <div key={j} style={{ color: colorLine(line), opacity: i === entries.length - 1 ? 1 : 0.75 + (i / entries.length) * 0.25 }}>
               {line || "\u00a0"}
             </div>
           ))}
         </div>
       ))}
-      <div style={{ color: "#00ff88", animation: "blink 1s step-end infinite" }}>▋</div>
+      <div style={{ color: "var(--accent-green)", animation: "blink 1s step-end infinite" }}>▋</div>
     </div>
   );
 };
@@ -359,17 +359,24 @@ const ConfigEditor = ({ title, content, onSave, readOnly }: ConfigEditorProps) =
 
 interface TabBarProps { tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void; }
 const TabBar = ({ tabs, active, onChange }: TabBarProps) => (
-  <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border-default)", marginBottom: "var(--space-4)" }}>
-    {tabs.map(tab => (
-      <button key={tab.id} onClick={() => onChange(tab.id)} style={{
-        background: "transparent",
-        border: "none", borderBottom: active === tab.id ? "2px solid var(--accent-blue)" : "2px solid transparent",
-        color: active === tab.id ? "var(--text-primary)" : "var(--text-muted)",
-        padding: "8px 14px", cursor: "pointer",
-        fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: active === tab.id ? 600 : 400,
-        transition: "all 0.2s ease",
-      }}>{tab.label}</button>
-    ))}
+  <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-default)", marginBottom: "var(--space-4)" }}>
+    {tabs.map(tab => {
+      const isActive = active === tab.id;
+      return (
+        <button key={tab.id} onClick={() => onChange(tab.id)} style={{
+          background: isActive ? "var(--bg-elevated)" : "transparent",
+          border: "none",
+          borderBottom: isActive ? "2px solid var(--accent-blue)" : "2px solid transparent",
+          color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+          padding: "10px 16px", cursor: "pointer",
+          fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: isActive ? 600 : 500,
+          transition: "all var(--transition-fast)",
+          borderRadius: "var(--radius-sm) var(--radius-sm) 0 0",
+        }} className="clawsec-tab">
+          {tab.label}
+        </button>
+      );
+    })}
   </div>
 );
 
@@ -499,9 +506,21 @@ export default function ClawSecDashboard() {
     const tier = finding.remediation_tier;
 
     if (tier === "approval") {
-      setFixedIds(prev => new Set([...prev, finding.id]));
-      addNotification(`Pending approval: ${finding.id}`, "warning");
-      setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] PENDING_APPROVAL\nseverity: info\ndomain: ${finding.domain ?? "unknown"}\ndetail: ${finding.id} marked for approval\naction_taken: queued\n---`]);
+      try {
+        const res = await applyRemediation(finding.id, clawsecToken);
+        setFixedIds(prev => new Set([...prev, finding.id]));
+        addNotification(`Remediation applied: ${finding.id}`, "ok");
+        setChangelog(prev => [...prev.slice(-19), `## [${new Date().toISOString()}] APPROVAL_REMEDIATION\nseverity: info\ndomain: ${finding.domain ?? "unknown"}\ndetail: ${finding.id} fixed\naction_taken: ${res?.already_done ? "already_done" : "applied"}\n---`]);
+        fetchAppliedFixes().then(af => setAppliedFixes(af));
+      } catch (err) {
+        const msg = String(err);
+        logger.error("handleFix failed", { checkId: finding.id, error: msg });
+        if (msg.includes("401") || msg.includes("Unauthorized")) {
+          addNotification(`Auth required — Token in Config tab eintragen`, "warning");
+        } else {
+          addNotification(`Fix fehlgeschlagen: ${finding.id}`, "critical");
+        }
+      }
       return;
     }
 
@@ -577,6 +596,7 @@ export default function ClawSecDashboard() {
         @keyframes spin   { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
         @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
+        .clawsec-tab:hover { background: var(--bg-card) !important; color: var(--text-secondary) !important; }
       `}</style>
 
       <div style={{ minHeight: "100vh", background: "var(--bg-base)", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
@@ -655,30 +675,39 @@ export default function ClawSecDashboard() {
         {/* ── Main Layout ── */}
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "24px 24px" }}>
 
-          {/* KPI Strip (compact) */}
-          <div style={{ display: "flex", gap: 16, marginBottom: "var(--space-4)", alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* KPI Strip — Score arc, badges, risk history */}
+          <div style={{
+            display: "flex", gap: "var(--space-4)", marginBottom: "var(--space-4)", alignItems: "center", flexWrap: "wrap",
+            background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)",
+            padding: "var(--space-3) var(--space-4)", boxShadow: "var(--shadow-sm)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
               <ScoreArc score={score} compact />
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                 {[
-                  { label: "Critical", value: visibleFindings.filter(f => f.severity === "critical").length, color: "#e85d5d" },
-                  { label: "High", value: visibleFindings.filter(f => f.severity === "high").length, color: "#ff9f0a" },
-                  { label: "Fixed", value: scanResult.applied_fixes.length + fixedIds.size, color: "#34c759" },
-                  { label: "Pending", value: scanResult.pending_approval.length, color: "#ffd60a" },
-                ].map(({ label, value, color }) => (
-                  <div key={label} style={{
-                    background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-                    padding: "6px 10px", display: "flex", alignItems: "baseline", gap: 6,
-                  }}>
-                    <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{label}</span>
-                    <span style={{ color, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600 }}>{value}</span>
-                  </div>
-                ))}
+                  { label: "Critical", value: visibleFindings.filter(f => f.severity === "critical").length, sev: "critical" },
+                  { label: "High", value: visibleFindings.filter(f => f.severity === "high").length, sev: "high" },
+                  { label: "Fixed", value: scanResult.applied_fixes.length + fixedIds.size, sev: "ok" },
+                  { label: "Pending", value: scanResult.pending_approval.length, sev: "medium" },
+                ].map(({ label, value, sev }) => {
+                  const c = SEV[sev] ?? SEV.info;
+                  return (
+                    <div key={label} style={{
+                      background: c.bg, border: `1px solid ${c.border}44`, borderRadius: "var(--radius-sm)",
+                      padding: "6px 12px", display: "flex", alignItems: "baseline", gap: 6,
+                    }}>
+                      <span style={{ color: c.text, fontFamily: "var(--font-mono)", fontSize: 9, textTransform: "uppercase" }}>{label}</span>
+                      <span style={{ color: c.text, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600 }}>{value}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-            <div style={{ marginLeft: "auto", minWidth: 180 }}>
-              <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: 4 }}>Risk history</div>
-              <ScoreHistoryChart history={scoreHistory} compact />
+            <div style={{ marginLeft: "auto", minWidth: 200 }}>
+              <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: "var(--space-1)", letterSpacing: 1 }}>Risk history</div>
+              <div style={{ background: "var(--bg-base)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+                <ScoreHistoryChart history={scoreHistory} compact />
+              </div>
             </div>
           </div>
 
@@ -909,57 +938,68 @@ export default function ClawSecDashboard() {
                   <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{apiConnected ? "Live" : "Offline"}</span>
                 </div>
               </div>
-              <div style={{ background: "var(--bg-base)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", padding: 4 }}>
-                <ChangelogViewer entries={changelog} />
+              <div style={{ background: "var(--bg-base)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+                <ChangelogViewer entries={changelog} height={360} />
               </div>
             </div>
           )}
 
           {/* ══ CONFIG ══ */}
           {tab === "config" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
-              <ConfigEditor title="SOUL.md — Identity" content={configs.soul} readOnly={true} onSave={() => {}} />
-              <ConfigEditor title="CONSTRAINTS.md — Hard limits" content={configs.constraints} readOnly={true} onSave={() => {}} />
-              <ConfigEditor
-                title="GATEWAY.md — Routing"
-                content={configs.gateway}
-                readOnly={false}
-                onSave={(v) => {
-                  const updated = { ...configs, gateway: v };
-                  setConfigs(updated);
-                  saveLocalConfig(updated);
-                  addNotification("GATEWAY.md saved", "info");
-                }}
-              />
-              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", padding: "var(--space-4)" }}>
-                <div style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 600, marginBottom: "var(--space-2)" }}>Auth token</div>
-                <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10, marginBottom: "var(--space-2)", lineHeight: 1.6 }}>
-                  Required for POST /api/apply/. Stored in session only.
-                  <br />Server path: <span style={{ color: "var(--text-muted)" }}>.clawsec_token</span>
-                </div>
-                <input
-                  type="password"
-                  placeholder="Paste token…"
-                  value={clawsecToken}
-                  onChange={(e) => { setClawsecToken(e.target.value); saveToken(e.target.value); }}
-                  style={{
-                    width: "100%", background: "var(--bg-base)", border: "1px solid var(--border-default)",
-                    borderRadius: "var(--radius-sm)", color: "var(--text-secondary)",
-                    fontFamily: "var(--font-mono)", fontSize: 10,
-                    padding: "var(--space-2)", outline: "none", boxSizing: "border-box",
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 900 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+                <ConfigEditor title="SOUL.md — Identity" content={configs.soul} readOnly={true} onSave={() => {}} />
+                <ConfigEditor title="CONSTRAINTS.md — Hard limits" content={configs.constraints} readOnly={true} onSave={() => {}} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+                <ConfigEditor
+                  title="GATEWAY.md — Routing"
+                  content={configs.gateway}
+                  readOnly={false}
+                  onSave={(v) => {
+                    const updated = { ...configs, gateway: v };
+                    setConfigs(updated);
+                    saveLocalConfig(updated);
+                    addNotification("GATEWAY.md saved", "info");
                   }}
                 />
-                <div style={{ marginTop: "var(--space-2)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
-                  {[
-                    { label: "Heartbeat", value: "15s" },
-                    { label: "Scan timeout", value: "35s" },
-                    { label: "Tool baseline", value: "20/5min" },
-                  ].map(({ label, value }) => (
-                    <div key={label} style={{ padding: "6px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                      <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: 2 }}>{label}</div>
-                      <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{value}</div>
+                <div style={{
+                  background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)",
+                  padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)",
+                }}>
+                  <div>
+                    <div style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 600, marginBottom: "var(--space-1)" }}>Auth token</div>
+                    <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10, lineHeight: 1.6 }}>
+                      Required for POST /api/apply/. Stored in session only. Server path: <span style={{ color: "var(--text-secondary)" }}>.clawsec_token</span>
                     </div>
-                  ))}
+                  </div>
+                  <input
+                    type="password"
+                    placeholder="Paste token…"
+                    value={clawsecToken}
+                    onChange={(e) => { setClawsecToken(e.target.value); saveToken(e.target.value); }}
+                    style={{
+                      width: "100%", background: "var(--bg-base)", border: "1px solid var(--border-default)",
+                      borderRadius: "var(--radius-sm)", color: "var(--text-secondary)",
+                      fontFamily: "var(--font-mono)", fontSize: 11,
+                      padding: "var(--space-2) var(--space-3)", outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)" }}>
+                    <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: "var(--space-2)", letterSpacing: 1 }}>Settings</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
+                      {[
+                        { label: "Heartbeat", value: "15s" },
+                        { label: "Scan timeout", value: "35s" },
+                        { label: "Tool baseline", value: "20/5min" },
+                      ].map(({ label, value }) => (
+                        <div key={label} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border-subtle)" }}>
+                          <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: 2 }}>{label}</div>
+                          <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

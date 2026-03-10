@@ -32,7 +32,8 @@ print(json.dumps(findings))
 }
 
 # ── Check 1: World-readable session .jsonl files ──────────────────────────────
-# OpenClaw may store sessions in agents/ or sessions/ — check both
+# OpenClaw canonical: ~/.openclaw/agents/<agentId>/sessions/*.jsonl
+# Legacy fallback: ~/.openclaw/sessions/*.jsonl — both checked for compatibility
 WORLD_READABLE=0
 
 if [[ -d "$TARGET_DIR/agents" ]]; then

@@ -205,9 +205,7 @@ ok "Plugin entry: ${EXTENSION_DIR}/index.ts"
 # Coordinator runtime imports local modules; copy them alongside index.ts.
 for module_file in \
   "src/coordinator-types.ts" \
-  "src/coordinator-risk.ts" \
   "src/coordinator-reports.ts" \
-  "src/coordinator-remediation.ts" \
   "src/policy.ts"; do
   if [[ -f "${INSTALL_DIR}/${module_file}" ]]; then
     cp "${INSTALL_DIR}/${module_file}" "${EXTENSION_DIR}/$(basename "${module_file}")"

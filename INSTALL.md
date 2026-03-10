@@ -96,8 +96,9 @@ There is no active frontend in `src/` anymore. The canonical UI is `dashboard/`.
 │   └── clawsec/                        ← ClawSec runtime root (COPY from repo)
 │       ├── openclaw.plugin.json
 │       ├── src/
-│       │   ├── coordinator.ts          ← OpenClaw plugin + coordinator logic
-│       │   ├── coordinator-*.ts        ← risk/report/remediation modules
+│       │   ├── coordinator.ts         ← OpenClaw plugin (hooks only)
+│       │   ├── coordinator-reports.ts ← loadLastReport for session_start
+│       │   ├── coordinator-types.ts   ← shared types
 │       │   └── policy.ts               ← security policy constants
 │       ├── dashboard/
 │       │   ├── src/App.tsx             ← Active dashboard (v3)
@@ -142,6 +143,23 @@ There is no active frontend in `src/` anymore. The canonical UI is `dashboard/`.
         ├── openclaw.plugin.json        ← COPIED
         └── tsconfig.json              ← COPIED (CommonJS module resolution)
 ```
+
+---
+
+## Optional: Hourly Cron Scan
+
+Schedule automatic ClawSec scans via OpenClaw's cron:
+
+```bash
+openclaw cron add \
+  --name "ClawSec hourly" \
+  --cron "0 * * * *" \
+  --session isolated \
+  --message "Run ClawSec security scan. Call GET http://127.0.0.1:3001/api/scan. If score > 50, summarize findings." \
+  --announce
+```
+
+Ensure `server.py` is running before the cron runs. Use `--announce` to deliver results to the last contact.
 
 ---
 

@@ -27,21 +27,19 @@ to orchestrate security scans across five specialized sub-agents, aggregate thei
 results, and take appropriate action. You never do raw scanning yourself — you
 delegate, aggregate, and decide.
 
-## Phase 1 — Parallel Sub-Agent Dispatch
+## Phase 1 — Run Full Scan via ClawSec Backend
 
-Invoke all five sub-agents **simultaneously** using OpenClaw's subagent spawning:
+**Primary method:** Call the ClawSec backend API to run a full scan across all five domains:
 
 ```
-DISPATCH simultaneously:
-  → clawsec-env     (credentials, secrets, .env files)
-  → clawsec-perm    (filesystem permissions, SOUL.md, workspace files)
-  → clawsec-net     (port binding, gateway exposure, CORS)
-  → clawsec-session (session logs, memory stores, conversation history)
-  → clawsec-config  (openclaw.json, gateway auth, MCP server config)
-
-Timeout per agent: 30 seconds
-If an agent times out: log timeout as a finding, continue with others
+curl -s http://127.0.0.1:3001/api/scan
 ```
+
+Use `exec` or `bash` with the above command. The backend (server.py) must be running — start it with `python3 scripts/server.py` or the systemd service.
+
+**On success:** The response is a JSON object with `agent_results` containing findings from all five sub-agents (clawsec-env, clawsec-perm, clawsec-net, clawsec-session, clawsec-config).
+
+**On failure (connection refused, timeout):** Report clearly: "ClawSec backend not reachable. Start server.py: `python3 ~/.openclaw/workspace/clawsec/scripts/server.py` or ensure the ClawSec systemd service is running."
 
 Each agent returns a `SubAgentResult` JSON:
 ```json
@@ -66,7 +64,7 @@ Each agent returns a `SubAgentResult` JSON:
 
 ## Phase 2 — Aggregation and OWASP Mapping
 
-After all agents complete (or timeout):
+After the scan response is received (or on timeout/error):
 
 1. Merge all `findings[]` arrays into a single list
 2. Deduplicate by `id` (same check from multiple agents → keep highest severity)
@@ -124,7 +122,7 @@ Wait max 10 minutes for response. If no reply → log as `pending_approval`, con
 
 ## Phase 4 — Report Generation
 
-Write to `~/.openclaw/workspace/clawsec/reports/last-scan.json`:
+The backend persists the report to `~/.openclaw/workspace/clawsec/reports/last-scan.json` when `/api/scan` is called. The response format is:
 ```json
 {
   "scanned_at": "<ISO timestamp>",
@@ -140,7 +138,7 @@ Write to `~/.openclaw/workspace/clawsec/reports/last-scan.json`:
 }
 ```
 
-Also write timestamped copy to `reports/scan-YYYYMMDD_HHMMSS.json`.
+The backend also writes a timestamped copy to `reports/scan-YYYYMMDD_HHMMSS.json`.
 
 ## Phase 5 — Notification Logic
 
@@ -174,18 +172,16 @@ Dashboard: http://192.168.178.147:8081
 ## Heartbeat Mode (light scan)
 
 When triggered by heartbeat (not user message):
-1. Run Phase 1 as normal
-2. Load `reports/last-scan.json`
-3. Compare new findings to previous findings
-4. Only process and alert on NEW findings (delta)
-5. Skip Tier 1 auto-fixes if no new findings
+1. Call `GET http://127.0.0.1:3001/api/scan` as in Phase 1
+2. On success: load `reports/last-scan.json` (or use the scan response) and compare new findings to previous
+3. Only process and alert on NEW findings (delta)
+4. Skip Tier 1 auto-fixes if no new findings
 
 ## Error Handling
 
-- Agent timeout (>30s) → log `agent_timeout` finding, severity: medium
-- Agent crash → log `agent_error` finding with stderr, severity: medium
-- Server unreachable → abort scan, alert user
-- Partial results (some agents failed) → proceed with available data, note in report
+- Backend unreachable → report clearly: "ClawSec backend not reachable. Start server.py."
+- Timeout (>35s) → report timeout, suggest retry
+- Partial results (some agents failed in response) → proceed with available data, note in report
 
 ## Security Constraints for This Skill
 

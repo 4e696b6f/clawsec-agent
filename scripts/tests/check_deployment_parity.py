@@ -60,9 +60,7 @@ def main() -> int:
     extension_pairs = [
         (ROOT / "src" / "coordinator.ts", ext_dir / "index.ts"),
         (ROOT / "src" / "coordinator-types.ts", ext_dir / "coordinator-types.ts"),
-        (ROOT / "src" / "coordinator-risk.ts", ext_dir / "coordinator-risk.ts"),
         (ROOT / "src" / "coordinator-reports.ts", ext_dir / "coordinator-reports.ts"),
-        (ROOT / "src" / "coordinator-remediation.ts", ext_dir / "coordinator-remediation.ts"),
         (ROOT / "src" / "policy.ts", ext_dir / "policy.ts"),
         (ROOT / "openclaw.plugin.json", ext_dir / "openclaw.plugin.json"),
         (ROOT / "tsconfig.json", ext_dir / "tsconfig.json"),

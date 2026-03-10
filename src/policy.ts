@@ -13,6 +13,9 @@ export const MUTATING_TOOL_NAMES = [
   "edit_file",
   "str_replace",
   "create_file",
+  "edit",
+  "write",
+  "process",
   "bash",
   "exec",
 ];
@@ -25,7 +28,7 @@ export const AUTO_REMEDIATION_IDS = [
   "runtime_package_install",
   "soul_writable",
   "constraints_writable",
-  // soul_writable and constraints_writable are handled inline in coordinator-remediation.ts
+  // soul_writable and constraints_writable handled via server.py remediation scripts
 ];
 
 // Check IDs that require explicit supervisor approval before execution.

@@ -2,7 +2,7 @@
   "id": "clawsec",
   "name": "ClawSec 2.0",
   "version": "2.0.0",
-  "description": "Multi-agent security scanner for OpenClaw. Orchestrates ENV, PERMISSION, NETWORK, SESSION, and CONFIG sub-agents. Auto-applies safe remediations, routes approvals via Telegram.",
+  "description": "Multi-agent security scanner for OpenClaw. Scans via GET /api/scan. Orchestrates ENV, PERMISSION, NETWORK, SESSION, and CONFIG domains. Dashboard for findings and approval-based remediations.",
   "kind": "extension",
   "entry": "src/coordinator.ts",
   "author": "clawsec",

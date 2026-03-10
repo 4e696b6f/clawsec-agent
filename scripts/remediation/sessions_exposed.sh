@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Remediation: sessions_exposed
 # Tier:  approval — chmod on potentially active session files
-# Scope: ~/.openclaw/sessions/ and ~/.openclaw/agents/ *.jsonl
+# Scope: OpenClaw canonical ~/.openclaw/agents/<agentId>/sessions/*.jsonl
+#        Legacy fallback ~/.openclaw/sessions/*.jsonl — both checked
 # Exit:  0=applied, 1=already_done, 2=error
 #
 # Contract: outputs JSON to stdout {"exit_code": N, "output": "..."}
