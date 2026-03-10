@@ -84,27 +84,24 @@ beforeEach(() => {
 describe("App smoke tests", () => {
   it("renders without crashing when backend is offline", () => {
     render(<App />);
-    // Header logo "CLAWSEC" appears — use getAllByText since skill label also shows "CLAWSEC"
-    const matches = screen.getAllByText("CLAWSEC");
+    const matches = screen.getAllByText("ClawSec");
     expect(matches.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows RUN SCAN button", () => {
+  it("shows Run scan button", () => {
     render(<App />);
-    // Use getByRole to avoid ambiguity with parent containers
-    expect(screen.getByRole("button", { name: /RUN SCAN/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Run scan/ })).toBeTruthy();
   });
 
-  it("shows API OFFLINE indicator when backend not reachable", async () => {
+  it("shows API offline indicator when backend not reachable", async () => {
     render(<App />);
     await waitFor(() => {
-      // "API OFFLINE" span — getAllByText because footer also says "BACKEND: OFFLINE"
-      const offlineEls = screen.getAllByText(/OFFLINE/);
+      const offlineEls = screen.getAllByText(/Offline/);
       expect(offlineEls.length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  it("shows API LIVE indicator after heartbeat resolves", async () => {
+  it("shows Connected indicator after heartbeat resolves", async () => {
     vi.mocked(api.fetchHeartbeat).mockResolvedValue({
       status: "active",
       agent_id: "kairos",
@@ -118,16 +115,15 @@ describe("App smoke tests", () => {
     });
     render(<App />);
     await waitFor(() => {
-      const liveEls = screen.getAllByText(/LIVE/);
-      expect(liveEls.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("Connected")).toBeTruthy();
     });
   });
 
-  it("calls fetchScan when RUN SCAN is clicked", async () => {
+  it("calls fetchScan when Run scan is clicked", async () => {
     vi.mocked(api.fetchScan).mockResolvedValue(mockScanResult);
     vi.mocked(api.computeScore).mockReturnValue(30);
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /RUN SCAN/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run scan/ }));
     await waitFor(() => {
       expect(api.fetchScan).toHaveBeenCalledTimes(1);
     });
@@ -137,7 +133,7 @@ describe("App smoke tests", () => {
     vi.mocked(api.fetchScan).mockResolvedValue(mockScanResult);
     vi.mocked(api.computeScore).mockReturnValue(30);
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /RUN SCAN/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run scan/ }));
     await waitFor(() => {
       expect(screen.getByText(".env files not in .gitignore")).toBeTruthy();
     });
@@ -146,24 +142,24 @@ describe("App smoke tests", () => {
   it("shows no scan message before first scan", async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText(/Noch kein Scan geladen/)).toBeTruthy();
+      expect(screen.getByText(/No scan loaded yet/)).toBeTruthy();
     });
   });
 
-  it("shows tabs: OVERVIEW, FINDINGS, AGENTS, CHANGELOG, CONFIG", () => {
+  it("shows tabs: Overview, Findings, Agents, Changelog, Config", () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: "OVERVIEW" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /FINDINGS/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "AGENTS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CHANGELOG" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CONFIG" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Findings/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Changelog" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Config" })).toBeTruthy();
   });
 
-  it("navigates to FINDINGS tab when clicked", async () => {
+  it("navigates to Findings tab when clicked", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /FINDINGS/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Findings/ }));
     await waitFor(() => {
-      expect(screen.getByText("SCAN AUSSTEHEND")).toBeTruthy();
+      expect(screen.getByText("Scan pending")).toBeTruthy();
     });
   });
 });

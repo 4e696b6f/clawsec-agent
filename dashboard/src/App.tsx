@@ -5,6 +5,7 @@ import {
 } from "./api";
 import { logger } from "./logger";
 import type { Finding, ScanResult, HeartbeatResponse, DomainStatus } from "./types";
+import { AgentHierarchy } from "./components/AgentHierarchy";
 
 // ─── Local types ───────────────────────────────────────────────────────────────
 type NotifType = "critical" | "warning" | "ok" | "info";
@@ -70,15 +71,15 @@ const defaultHeartbeat: HeartbeatResponse = {
   version:              "2.0.0",
 };
 
-// ─── Color system ──────────────────────────────────────────────────────────────
+// ─── Color system (de-saturated, theme-aligned) ─────────────────────────────────
 type SevColors = { bg: string; border: string; text: string; glow: string };
 const SEV: Record<string, SevColors> = {
-  critical: { bg: "#ff2d2d22", border: "#ff2d2d", text: "#ff6b6b", glow: "#ff2d2d" },
-  high:     { bg: "#ff8c0022", border: "#ff8c00", text: "#ffb347", glow: "#ff8c00" },
-  medium:   { bg: "#ffd70022", border: "#ffd700", text: "#ffe55c", glow: "#ffd700" },
-  low:      { bg: "#00bfff22", border: "#00bfff", text: "#7dd3fc", glow: "#00bfff" },
-  info:     { bg: "#8b8b8b22", border: "#8b8b8b", text: "#b4b4b4", glow: "#8b8b8b" },
-  ok:       { bg: "#00ff8822", border: "#00ff88", text: "#6bffb8", glow: "#00ff88" },
+  critical: { bg: "var(--sev-critical-bg)", border: "var(--sev-critical-border)", text: "var(--sev-critical-text)", glow: "#e85d5d" },
+  high:     { bg: "var(--sev-high-bg)", border: "var(--sev-high-border)", text: "var(--sev-high-text)", glow: "#ff9f0a" },
+  medium:   { bg: "var(--sev-medium-bg)", border: "var(--sev-medium-border)", text: "var(--sev-medium-text)", glow: "#ffd60a" },
+  low:      { bg: "var(--sev-low-bg)", border: "var(--sev-low-border)", text: "var(--sev-low-text)", glow: "#4a9fff" },
+  info:     { bg: "rgba(139,139,139,0.12)", border: "#8b8b8b", text: "#b4b4b4", glow: "#8b8b8b" },
+  ok:       { bg: "var(--sev-ok-bg)", border: "var(--sev-ok-border)", text: "var(--sev-ok-text)", glow: "#34c759" },
 };
 
 // ─── Subcomponents ─────────────────────────────────────────────────────────────
@@ -86,70 +87,82 @@ const SEV: Record<string, SevColors> = {
 interface GlowDotProps { color: string; pulse?: boolean; }
 const GlowDot = ({ color, pulse }: GlowDotProps) => (
   <span style={{
-    display: "inline-block", width: 8, height: 8, borderRadius: "50%",
-    background: color, boxShadow: `0 0 6px ${color}, 0 0 12px ${color}44`,
+    display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+    background: color, boxShadow: `0 0 4px ${color}44`,
     animation: pulse ? "pulse 1.5s ease-in-out infinite" : "none",
     flexShrink: 0,
   }} />
 );
 
-interface ScoreArcProps { score: number; }
-const ScoreArc = ({ score }: ScoreArcProps) => {
-  const r = 54, cx = 64, cy = 64;
+interface ScoreArcProps { score: number; compact?: boolean; }
+const ScoreArc = ({ score, compact }: ScoreArcProps) => {
+  const s = compact ? 96 : 128;
+  const r = compact ? 40 : 54;
+  const cx = s / 2;
+  const cy = s / 2;
   const circ = 2 * Math.PI * r;
   const pct = Math.min(score / 100, 1);
-  const color = score <= 20 ? "#00ff88" : score <= 50 ? "#ffd700" : "#ff2d2d";
+  const color = score <= 20 ? "#34c759" : score <= 50 ? "#ffd60a" : "#e85d5d";
   const label = score <= 20 ? "SECURE" : score <= 50 ? "ATTENTION" : "CRITICAL";
+  const fontSize = compact ? 16 : 22;
+  const labelSize = compact ? 8 : 9;
   return (
-    <svg width={128} height={128} viewBox="0 0 128 128">
+    <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`}>
       <defs>
         <filter id="arcglow">
-          <feGaussianBlur stdDeviation="3" result="blur" />
+          <feGaussianBlur stdDeviation="2" result="blur" />
           <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
         </filter>
       </defs>
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1a1a2e" strokeWidth={10} />
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#0f0f1e" strokeWidth={10}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--bg-elevated,#22222e)" strokeWidth={compact ? 6 : 10} />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--bg-base,#0d0d14)" strokeWidth={compact ? 6 : 10}
         strokeDasharray={`${circ * 0.75} ${circ * 0.25}`}
-        strokeDashoffset={circ * 0.875} strokeLinecap="round" transform="rotate(-270 64 64)" />
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={8}
+        strokeDashoffset={circ * 0.875} strokeLinecap="round" transform={`rotate(-270 ${cx} ${cy})`} />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={compact ? 6 : 8}
         strokeDasharray={`${circ * 0.75 * pct} ${circ - circ * 0.75 * pct}`}
         strokeDashoffset={circ * 0.875} strokeLinecap="round"
-        transform="rotate(-270 64 64)" filter="url(#arcglow)"
+        transform={`rotate(-270 ${cx} ${cy})`} filter="url(#arcglow)"
         style={{ transition: "stroke-dasharray 0.8s ease, stroke 0.5s ease" }} />
-      <text x={cx} y={cy - 8} textAnchor="middle" fill={color}
-        style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 22, fontWeight: 700 }}>
+      <text x={cx} y={cy - 6} textAnchor="middle" fill={color}
+        style={{ fontFamily: "var(--font-mono)", fontSize, fontWeight: 600 }}>
         {Math.round(score)}
       </text>
-      <text x={cx} y={cy + 10} textAnchor="middle" fill={color + "cc"}
-        style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2 }}>
+      <text x={cx} y={cy + 8} textAnchor="middle" fill={color + "cc"}
+        style={{ fontFamily: "var(--font-mono)", fontSize: labelSize, letterSpacing: 1 }}>
         {label}
       </text>
     </svg>
   );
 };
 
-interface DomainCardProps { name: string; data: DomainStatus; findings: Finding[]; }
-const DomainCard = ({ name, data, findings }: DomainCardProps) => {
+interface DomainCardProps { name: string; data: DomainStatus; findings: Finding[]; compact?: boolean; }
+const DomainCard = ({ name, data, findings, compact }: DomainCardProps) => {
   const domFindings = findings.filter(f => f.domain === name);
   const ok = data.ok && domFindings.length === 0;
   const c = ok ? SEV.ok : domFindings[0] ? (SEV[domFindings[0].severity] ?? SEV.info) : SEV.medium;
   const icons: Record<string, string> = { identity: "⬡", credentials: "⬢", network: "◈", sessions: "◎", config: "⬟" };
   return (
     <div style={{
-      background: c.bg, border: `1px solid ${c.border}44`, borderRadius: 8,
-      padding: "12px 14px",
-      boxShadow: ok ? `inset 0 0 20px ${c.glow}08` : `inset 0 0 20px ${c.glow}12`,
-      transition: "all 0.4s ease",
+      background: c.bg, border: `1px solid ${c.border}44`, borderRadius: "var(--radius-sm,6px)",
+      padding: compact ? "8px 10px" : "12px 14px",
+      boxShadow: "var(--shadow-sm)",
+      transition: "all 0.2s ease",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ color: c.text, fontSize: 16 }}>{icons[name]}</span>
-        <span style={{ color: c.text, fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>{name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: compact ? 2 : 6 }}>
+        <span style={{ color: c.text, fontSize: compact ? 12 : 16 }}>{icons[name]}</span>
+        <span style={{ color: c.text, fontFamily: "var(--font-mono)", fontSize: compact ? 9 : 11, letterSpacing: 1 }}>{name}</span>
         <GlowDot color={c.glow} pulse={!ok} />
       </div>
-      <div style={{ color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-        {data.duration_ms > 0 ? `${data.duration_ms}ms · ` : ""}{domFindings.length} finding{domFindings.length !== 1 ? "s" : ""}
-      </div>
+      {!compact && (
+        <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+          {data.duration_ms > 0 ? `${data.duration_ms}ms · ` : ""}{domFindings.length} finding{domFindings.length !== 1 ? "s" : ""}
+        </div>
+      )}
+      {compact && (
+        <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>
+          {domFindings.length} {data.duration_ms > 0 ? `· ${data.duration_ms}ms` : ""}
+        </div>
+      )}
     </div>
   );
 };
@@ -159,12 +172,12 @@ const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
   const c = SEV[finding.severity] ?? SEV.info;
   return (
     <div style={{
-      background: fixed ? "#0a1a0a" : c.bg,
-      border: `1px solid ${fixed ? "#00ff8833" : c.border + "33"}`,
-      borderLeft: `3px solid ${fixed ? "#00ff88" : c.border}`,
-      borderRadius: "0 6px 6px 0", padding: "10px 14px",
-      marginBottom: 6, display: "flex", alignItems: "flex-start", gap: 12,
-      opacity: fixed ? 0.5 : 1, transition: "all 0.4s ease",
+      background: fixed ? "var(--sev-ok-bg)" : c.bg,
+      border: `1px solid ${fixed ? "var(--sev-ok-border)33" : c.border + "33"}`,
+      borderLeft: `3px solid ${fixed ? "var(--accent-green)" : c.border}`,
+      borderRadius: "0 var(--radius-sm) var(--radius-sm) 0", padding: "var(--space-2) var(--space-3)",
+      marginBottom: "var(--space-2)", display: "flex", alignItems: "flex-start", gap: 12,
+      opacity: fixed ? 0.6 : 1, transition: "all 0.2s ease",
     }}>
       <div style={{ flexShrink: 0, paddingTop: 2 }}>
         {fixed
@@ -193,20 +206,22 @@ const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
         <div style={{ flexShrink: 0 }}>
           {finding.remediation_tier === "auto" && (
             <button onClick={() => onFix(finding)} style={{
-              background: "#00ff8822", border: "1px solid #00ff8866", color: "#00ff88",
-              borderRadius: 4, padding: "4px 10px",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
-            }}>AUTO FIX</button>
+              background: "var(--sev-ok-bg)", border: "1px solid var(--sev-ok-border)", color: "var(--accent-green)",
+              borderRadius: "var(--radius-sm)", padding: "4px 10px",
+              fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer",
+              transition: "all 0.2s",
+            }}>Auto fix</button>
           )}
           {finding.remediation_tier === "approval" && (
             <button onClick={() => onFix(finding)} style={{
-              background: "#ffd70022", border: "1px solid #ffd70066", color: "#ffd700",
-              borderRadius: 4, padding: "4px 10px",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer", letterSpacing: 1,
-            }}>APPROVE</button>
+              background: "var(--sev-medium-bg)", border: "1px solid var(--sev-medium-border)", color: "var(--accent-yellow)",
+              borderRadius: "var(--radius-sm)", padding: "4px 10px",
+              fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer",
+              transition: "all 0.2s",
+            }}>Approve</button>
           )}
           {finding.remediation_tier === "never" && (
-            <span style={{ color: "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>MANUAL</span>
+            <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>Manual</span>
           )}
         </div>
       )}
@@ -214,53 +229,7 @@ const FindingRow = ({ finding, onFix, fixed }: FindingRowProps) => {
   );
 };
 
-interface AgentStatusBarProps { heartbeat: HeartbeatResponse; apiConnected: boolean; }
-const AgentStatusBar = ({ heartbeat, apiConnected }: AgentStatusBarProps) => {
-  const isActive = heartbeat.status === "active";
-  const c = isActive ? SEV.ok : SEV.high;
-  const upHours = Math.floor(heartbeat.uptime_seconds / 3600);
-  const upMins  = Math.floor((heartbeat.uptime_seconds % 3600) / 60);
-  return (
-    <div style={{
-      background: "#0a0a16", border: `1px solid ${c.border}44`,
-      borderRadius: 8, padding: "14px 18px",
-      display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 16, alignItems: "center",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: "50%",
-          background: c.bg, border: `2px solid ${c.border}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: `0 0 12px ${c.glow}44`,
-          fontFamily: "'Share Tech Mono', monospace", fontSize: 14, color: c.text,
-        }}>K</div>
-        <div>
-          <div style={{ color: "#e0e0e0", fontFamily: "'Share Tech Mono', monospace", fontSize: 12, letterSpacing: 1 }}>KAIROS</div>
-          <div style={{ color: c.text, fontFamily: "'Share Tech Mono', monospace", fontSize: 10, letterSpacing: 2, textTransform: "uppercase" }}>{heartbeat.status}</div>
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-        {[
-          { label: "SKILL",    value: (heartbeat.current_skill || "—").toUpperCase() },
-          { label: "TOOLS/5m", value: heartbeat.tool_calls_last_5min },
-          { label: "MEM",      value: heartbeat.memory_used_mb > 0 ? heartbeat.memory_used_mb + "MB" : "—" },
-          { label: "UPTIME",   value: heartbeat.uptime_seconds > 0 ? `${upHours}h ${upMins}m` : "—" },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ textAlign: "center" }}>
-            <div style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>{label}</div>
-            <div style={{ color: "#9aafcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{value}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ textAlign: "right" }}>
-        <div style={{ color: "#555", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>API</div>
-        <div style={{ color: apiConnected ? "#00ff88" : "#ff2d2d", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-          {apiConnected ? "LIVE" : "OFFLINE"}
-        </div>
-      </div>
-    </div>
-  );
-};
+// AgentStatusBar removed — replaced by AgentHierarchy
 
 interface ChangelogViewerProps { entries: string[]; }
 const ChangelogViewer = ({ entries }: ChangelogViewerProps) => {
@@ -277,9 +246,9 @@ const ChangelogViewer = ({ entries }: ChangelogViewerProps) => {
   };
   return (
     <div ref={ref} style={{
-      background: "#050510", borderRadius: 6, padding: "12px 14px",
-      height: 260, overflowY: "auto", fontFamily: "'JetBrains Mono', monospace",
-      fontSize: 11, lineHeight: 1.7,
+      background: "var(--bg-base,#0d0d14)", borderRadius: "var(--radius-sm)", padding: "var(--space-2) var(--space-3)",
+      height: 180, overflowY: "auto", fontFamily: "var(--font-mono)",
+      fontSize: 10, lineHeight: 1.6,
     }}>
       {entries.map((entry, i) => (
         <div key={i}>
@@ -295,9 +264,11 @@ const ChangelogViewer = ({ entries }: ChangelogViewerProps) => {
   );
 };
 
-interface ScoreHistoryChartProps { history: number[]; }
-const ScoreHistoryChart = ({ history }: ScoreHistoryChartProps) => {
-  const w = 320, h = 80, pad = 10;
+interface ScoreHistoryChartProps { history: number[]; compact?: boolean; }
+const ScoreHistoryChart = ({ history, compact }: ScoreHistoryChartProps) => {
+  const w = compact ? 200 : 320;
+  const h = compact ? 48 : 80;
+  const pad = compact ? 6 : 10;
   const max = 100, min = 0;
   if (history.length < 2) return (
     <div style={{ width: w, height: h, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -339,30 +310,29 @@ const ConfigEditor = ({ title, content, onSave, readOnly }: ConfigEditorProps) =
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1 }}>{title}</span>
+        <span style={{ color: "var(--text-secondary)", fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 500 }}>{title}</span>
         {!readOnly && (
           <button onClick={handleSave} style={{
-            background: saved ? "#00ff8822" : "#0a1628",
-            border: `1px solid ${saved ? "#00ff88" : "#2a3f5f"}`,
-            color: saved ? "#00ff88" : "#7c9fcc",
-            borderRadius: 4, padding: "4px 12px",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: 9, cursor: "pointer",
-            letterSpacing: 1, transition: "all 0.3s",
-          }}>{saved ? "✓ SAVED" : "SAVE"}</button>
+            background: saved ? "var(--sev-ok-bg)" : "var(--bg-elevated)",
+            border: `1px solid ${saved ? "var(--accent-green)" : "var(--border-default)"}`,
+            color: saved ? "var(--accent-green)" : "var(--accent-blue)",
+            borderRadius: "var(--radius-sm)", padding: "4px 12px",
+            fontFamily: "var(--font-mono)", fontSize: 9, cursor: "pointer",
+            transition: "all 0.2s",
+          }}>{saved ? "Saved" : "Save"}</button>
         )}
-        {readOnly && <span style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>READ-ONLY (chmod 444)</span>}
+        {readOnly && <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>Read-only</span>}
       </div>
       <textarea
         value={val}
         onChange={(e) => !readOnly && setVal(e.target.value)}
         readOnly={readOnly}
         style={{
-          width: "100%", height: 180, background: readOnly ? "#030308" : "#050510",
-          border: "1px solid #1a1a2e", borderRadius: 6,
-          color: readOnly ? "#445566" : "#8899aa",
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-          padding: 12, resize: "vertical", outline: "none", boxSizing: "border-box",
-          lineHeight: 1.7, cursor: readOnly ? "default" : "text",
+          width: "100%", height: 160, background: "var(--bg-base)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+          color: readOnly ? "var(--text-muted)" : "var(--text-secondary)",
+          fontFamily: "var(--font-mono)", fontSize: 10,
+          padding: "var(--space-2)", resize: "vertical", outline: "none", boxSizing: "border-box",
+          lineHeight: 1.6, cursor: readOnly ? "default" : "text",
         }}
       />
     </div>
@@ -371,15 +341,15 @@ const ConfigEditor = ({ title, content, onSave, readOnly }: ConfigEditorProps) =
 
 interface TabBarProps { tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void; }
 const TabBar = ({ tabs, active, onChange }: TabBarProps) => (
-  <div style={{ display: "flex", gap: 2, borderBottom: "1px solid #0f0f1e", marginBottom: 20 }}>
+  <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border-default)", marginBottom: "var(--space-4)" }}>
     {tabs.map(tab => (
       <button key={tab.id} onClick={() => onChange(tab.id)} style={{
-        background: active === tab.id ? "#0a1628" : "transparent",
-        border: "none", borderBottom: active === tab.id ? "2px solid #4a7fcc" : "2px solid transparent",
-        color: active === tab.id ? "#9aafcc" : "#445566",
-        padding: "10px 18px", cursor: "pointer",
-        fontFamily: "'Share Tech Mono', monospace", fontSize: 10, letterSpacing: 1.5,
-        transition: "all 0.2s",
+        background: "transparent",
+        border: "none", borderBottom: active === tab.id ? "2px solid var(--accent-blue)" : "2px solid transparent",
+        color: active === tab.id ? "var(--text-primary)" : "var(--text-muted)",
+        padding: "8px 14px", cursor: "pointer",
+        fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: active === tab.id ? 600 : 400,
+        transition: "all 0.2s ease",
       }}>{tab.label}</button>
     ))}
   </div>
@@ -388,18 +358,18 @@ const TabBar = ({ tabs, active, onChange }: TabBarProps) => (
 interface ScanTriggerButtonProps { scanning: boolean; onClick: () => void; }
 const ScanTriggerButton = ({ scanning, onClick }: ScanTriggerButtonProps) => (
   <button onClick={onClick} disabled={scanning} style={{
-    background: "#0a1628",
-    border: `1px solid ${scanning ? "#2a3f5f" : "#4a7fcc"}`,
-    color: scanning ? "#445566" : "#7cb4ff",
-    borderRadius: 6, padding: "8px 20px", cursor: scanning ? "not-allowed" : "pointer",
-    fontFamily: "'Share Tech Mono', monospace", fontSize: 10, letterSpacing: 2,
-    boxShadow: scanning ? "none" : "0 0 12px #4a7fcc22",
-    transition: "all 0.3s",
-    display: "flex", alignItems: "center", gap: 8,
+    background: scanning ? "var(--bg-elevated)" : "var(--accent-blue)",
+    border: "none",
+    color: scanning ? "var(--text-muted)" : "#fff",
+    borderRadius: "var(--radius-sm)", padding: "6px 16px", cursor: scanning ? "not-allowed" : "pointer",
+    fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 600,
+    boxShadow: scanning ? "none" : "var(--shadow-sm)",
+    transition: "all 0.2s ease",
+    display: "flex", alignItems: "center", gap: 6,
   }}>
     {scanning
-      ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>◌</span> SCANNING...</>
-      : <><span>▶</span> RUN SCAN</>}
+      ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>◌</span> Scanning…</>
+      : <><span>▶</span> Run scan</>}
   </button>
 );
 
@@ -535,29 +505,27 @@ export default function ClawSecDashboard() {
   const notifColors: Record<NotifType, string> = { critical: "#ff2d2d", warning: "#ff8c00", ok: "#00ff88", info: "#4a7fcc" };
 
   const TABS = [
-    { id: "overview",  label: "OVERVIEW" },
-    { id: "findings",  label: `FINDINGS${visibleFindings.length > 0 ? ` [${visibleFindings.length}]` : ""}` },
-    { id: "agents",    label: "AGENTS" },
-    { id: "changelog", label: "CHANGELOG" },
-    { id: "config",    label: "CONFIG" },
+    { id: "overview",  label: "Overview" },
+    { id: "findings",  label: visibleFindings.length > 0 ? `Findings (${visibleFindings.length})` : "Findings" },
+    { id: "agents",    label: "Agents" },
+    { id: "changelog", label: "Changelog" },
+    { id: "config",    label: "Config" },
   ];
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@300;400;600&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #03030d; }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: #050510; }
-        ::-webkit-scrollbar-thumb { background: #1a2a4a; border-radius: 2px; }
+        ::-webkit-scrollbar-track { background: var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 2px; }
         @keyframes pulse  { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
         @keyframes blink  { 0%,100%{opacity:1;} 50%{opacity:0;} }
         @keyframes spin   { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
         @keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
       `}</style>
 
-      <div style={{ minHeight: "100vh", background: "#03030d", color: "#c0c8d8", fontFamily: "'JetBrains Mono', monospace" }}>
+      <div style={{ minHeight: "100vh", background: "var(--bg-base)", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
 
         {/* ── Notification Stack ── */}
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -574,52 +542,44 @@ export default function ClawSecDashboard() {
           ))}
         </div>
 
-        {/* ── Header ── */}
+        {/* ── Header (compact, 48px) ── */}
         <div style={{
-          background: "linear-gradient(180deg, #050518 0%, #03030d 100%)",
-          borderBottom: "1px solid #0f0f2e", padding: "0 24px",
+          background: "var(--bg-card)", borderBottom: "1px solid var(--border-default)", padding: "0 var(--space-4)",
           position: "sticky", top: 0, zIndex: 100,
         }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", height: 56, gap: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", height: 48, gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{
-                width: 32, height: 32,
-                background: "linear-gradient(135deg, #0a1628 0%, #1a2a4a 100%)",
-                border: "1px solid #2a4a7f", borderRadius: 6,
+                width: 28, height: 28, background: "var(--bg-elevated)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                boxShadow: "0 0 12px #4a7fcc22",
               }}>
-                <span style={{ color: "#4a9fff", fontSize: 16, lineHeight: 1 }}>⬡</span>
+                <span style={{ color: "var(--accent-blue)", fontSize: 14, lineHeight: 1 }}>⬡</span>
               </div>
               <div>
-                <div style={{ color: "#9aafcc", fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18, fontWeight: 700, letterSpacing: 3, lineHeight: 1 }}>CLAWSEC</div>
-                <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 8, letterSpacing: 2 }}>OPERATIONS CENTER v3.0</div>
+                <div style={{ color: "var(--text-primary)", fontFamily: "var(--font-sans)", fontSize: 15, fontWeight: 600 }}>ClawSec</div>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>Ops Center v3</div>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0a1020", border: "1px solid #0f2040", borderRadius: 4, padding: "4px 10px" }}>
-                <GlowDot color={paused ? "#ff8c00" : "#00ff88"} pulse={!paused} />
-                <span style={{ color: paused ? "#aa6600" : "#00aa55", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
-                  SUPERVISOR {paused ? "PAUSED" : "LIVE"}
-                </span>
+            <div style={{ display: "flex", gap: 6, marginLeft: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg-base)", border: "1px solid var(--border-subtle)", borderRadius: 4, padding: "2px 8px" }}>
+                <GlowDot color={paused ? "#ff9f0a" : "#34c759"} pulse={!paused} />
+                <span style={{ color: paused ? "#ff9f0a" : "#34c759", fontFamily: "var(--font-mono)", fontSize: 9 }}>{paused ? "Paused" : "Live"}</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0a1020", border: "1px solid #0f2040", borderRadius: 4, padding: "4px 10px" }}>
-                <GlowDot color={apiConnected ? "#00ff88" : "#ff2d2d"} pulse={apiConnected} />
-                <span style={{ color: apiConnected ? "#00aa55" : "#aa2222", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
-                  API {apiConnected ? "LIVE" : "OFFLINE"}
-                </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg-base)", border: "1px solid var(--border-subtle)", borderRadius: 4, padding: "2px 8px" }}>
+                <GlowDot color={apiConnected ? "#34c759" : "#e85d5d"} pulse={apiConnected} />
+                <span style={{ color: apiConnected ? "#34c759" : "#e85d5d", fontFamily: "var(--font-mono)", fontSize: 9 }}>API</span>
               </div>
             </div>
 
             <div style={{ flex: 1 }} />
 
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <button onClick={() => setPaused(p => !p)} style={{
-                background: "#0a0a18", border: "1px solid #1a2a3a", color: "#667788",
-                borderRadius: 4, padding: "6px 12px", cursor: "pointer",
-                fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1,
-              }}>{paused ? "▶ RESUME" : "⏸ PAUSE"}</button>
+                background: "transparent", border: "1px solid var(--border-default)", color: "var(--text-muted)",
+                borderRadius: 4, padding: "4px 10px", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 9,
+                transition: "all 0.2s",
+              }}>{paused ? "Resume" : "Pause"}</button>
               <ScanTriggerButton scanning={scanning} onClick={handleManualScan} />
             </div>
           </div>
@@ -628,44 +588,43 @@ export default function ClawSecDashboard() {
         {/* API Error Banner */}
         {apiError && (
           <div style={{
-            background: "#1a0505", borderBottom: "1px solid #ff2d2d33",
-            padding: "8px 24px", fontFamily: "'Share Tech Mono', monospace", fontSize: 10,
-            color: "#ff6b6b", display: "flex", alignItems: "center", gap: 10,
+            background: "var(--sev-critical-bg)", borderBottom: "1px solid var(--sev-critical-border)",
+            padding: "var(--space-2) var(--space-4)", fontFamily: "var(--font-mono)", fontSize: 10,
+            color: "var(--sev-critical-text)", display: "flex", alignItems: "center", gap: 10,
           }}>
             <span>⚠</span>
             <span>{apiError}</span>
-            <span style={{ color: "#445566", marginLeft: "auto" }}>Dashboard läuft im Offline-Modus</span>
+            <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>Offline mode</span>
           </div>
         )}
 
         {/* ── Main Layout ── */}
         <div style={{ maxWidth: 1280, margin: "0 auto", padding: "24px 24px" }}>
 
-          {/* KPI Strip */}
-          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr auto", gap: 16, marginBottom: 24, alignItems: "center" }}>
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <ScoreArc score={score} />
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-              {[
-                { label: "CRITICAL",   value: visibleFindings.filter(f => f.severity === "critical").length, color: "#ff2d2d" },
-                { label: "HIGH",       value: visibleFindings.filter(f => f.severity === "high").length,     color: "#ff8c00" },
-                { label: "AUTO-FIXED", value: scanResult.applied_fixes.length + fixedIds.size,              color: "#00ff88" },
-                { label: "PENDING",    value: scanResult.pending_approval.length,                            color: "#ffd700" },
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "14px 16px" }}>
-                  <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1.5, marginBottom: 6 }}>{label}</div>
-                  <div style={{ color, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 32, fontWeight: 900, lineHeight: 1 }}>{value}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "14px 16px" }}>
-              <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, marginBottom: 8 }}>
-                RISK HISTORY · {scoreHistory.length} points
+          {/* KPI Strip (compact) */}
+          <div style={{ display: "flex", gap: 16, marginBottom: "var(--space-4)", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <ScoreArc score={score} compact />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[
+                  { label: "Critical", value: visibleFindings.filter(f => f.severity === "critical").length, color: "#e85d5d" },
+                  { label: "High", value: visibleFindings.filter(f => f.severity === "high").length, color: "#ff9f0a" },
+                  { label: "Fixed", value: scanResult.applied_fixes.length + fixedIds.size, color: "#34c759" },
+                  { label: "Pending", value: scanResult.pending_approval.length, color: "#ffd60a" },
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{
+                    background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                    padding: "6px 10px", display: "flex", alignItems: "baseline", gap: 6,
+                  }}>
+                    <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{label}</span>
+                    <span style={{ color, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600 }}>{value}</span>
+                  </div>
+                ))}
               </div>
-              <ScoreHistoryChart history={scoreHistory} />
+            </div>
+            <div style={{ marginLeft: "auto", minWidth: 180 }}>
+              <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: 4 }}>Risk history</div>
+              <ScoreHistoryChart history={scoreHistory} compact />
             </div>
           </div>
 
@@ -674,23 +633,29 @@ export default function ClawSecDashboard() {
 
           {/* ══ OVERVIEW ══ */}
           {tab === "overview" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
               <div style={{ gridColumn: "1 / -1" }}>
-                <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>AGENT STATUS</div>
-                <AgentStatusBar heartbeat={heartbeat} apiConnected={apiConnected} />
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Agent status</div>
+                <AgentHierarchy
+                  heartbeat={heartbeat}
+                  domains={scanResult.domains}
+                  findings={visibleFindings}
+                  apiConnected={apiConnected}
+                  onSubAgentClick={() => setTab("findings")}
+                />
               </div>
 
               <div>
-                <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>SCAN DOMAINS</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Scan domains</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
                   {Object.entries(scanResult.domains).map(([name, data]) => (
-                    <DomainCard key={name} name={name} data={data} findings={visibleFindings} />
+                    <DomainCard key={name} name={name} data={data} findings={visibleFindings} compact />
                   ))}
-                  <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: "12px 14px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4 }}>
-                    <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>SYSTEM HASH</div>
-                    <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>{scanResult.system_hash}</div>
+                  <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 2 }}>
+                    <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>System hash</div>
+                    <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{scanResult.system_hash}</div>
                     {scanResult.scanned_at && (
-                      <div style={{ color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
+                      <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
                         {new Date(scanResult.scanned_at).toLocaleTimeString("de-DE")}
                       </div>
                     )}
@@ -699,26 +664,26 @@ export default function ClawSecDashboard() {
               </div>
 
               <div>
-                <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>LIVE CHANGELOG</div>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Live changelog</div>
                 <ChangelogViewer entries={changelog} />
               </div>
 
               {visibleFindings.length > 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>ACTIVE FINDINGS</div>
-                  {visibleFindings.slice(0, 3).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)}
-                  {visibleFindings.length > 3 && (
-                    <div onClick={() => setTab("findings")} style={{ color: "#4a7fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 10, cursor: "pointer", padding: "6px 0", letterSpacing: 1 }}>
-                      + {visibleFindings.length - 3} more → VIEW ALL FINDINGS
+                  <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Active findings</div>
+                  {visibleFindings.slice(0, 2).map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)}
+                  {visibleFindings.length > 2 && (
+                    <div onClick={() => setTab("findings")} style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 11, cursor: "pointer", padding: "6px 0", transition: "opacity 0.2s" }}>
+                      + {visibleFindings.length - 2} more → View all findings
                     </div>
                   )}
                 </div>
               )}
 
               {!scanResult.scanned_at && (
-                <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: "#334455" }}>
-                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 11, marginBottom: 12 }}>Noch kein Scan geladen.</div>
-                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>Klick auf ▶ RUN SCAN um den ersten Scan zu starten.</div>
+                <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                  <div style={{ fontFamily: "var(--font-sans)", fontSize: 12, marginBottom: 8 }}>No scan loaded yet.</div>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}>Click Run scan to start.</div>
                 </div>
               )}
             </div>
@@ -727,8 +692,8 @@ export default function ClawSecDashboard() {
           {/* ══ FINDINGS ══ */}
           {tab === "findings" && (
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div style={{ color: "#667788", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
                   {visibleFindings.length} active · {fixedIds.size + scanResult.applied_fixes.length} resolved
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -737,27 +702,27 @@ export default function ClawSecDashboard() {
                     return count > 0 && (
                       <span key={sev} style={{
                         background: SEV[sev].bg, border: `1px solid ${SEV[sev].border}44`,
-                        color: SEV[sev].text, borderRadius: 4, padding: "2px 8px",
-                        fontFamily: "'Share Tech Mono', monospace", fontSize: 9,
-                      }}>{sev.toUpperCase()} {count}</span>
+                        color: SEV[sev].text, borderRadius: "var(--radius-sm)", padding: "2px 8px",
+                        fontFamily: "var(--font-mono)", fontSize: 9,
+                      }}>{sev} {count}</span>
                     );
                   })}
                 </div>
               </div>
               {visibleFindings.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "60px 0", color: "#00ff88", fontFamily: "'Share Tech Mono', monospace", fontSize: 14, letterSpacing: 2 }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
-                  {scanResult.scanned_at ? "NO ACTIVE FINDINGS" : "SCAN AUSSTEHEND"}
-                  <div style={{ color: "#334455", fontSize: 10, marginTop: 8 }}>
-                    {scanResult.scanned_at ? `Score: ${Math.round(score)}/100` : "Klick auf ▶ RUN SCAN"}
+                <div style={{ textAlign: "center", padding: "48px 0", color: "var(--accent-green)", fontFamily: "var(--font-sans)", fontSize: 14 }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
+                  {scanResult.scanned_at ? "No active findings" : "Scan pending"}
+                  <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 8 }}>
+                    {scanResult.scanned_at ? `Score: ${Math.round(score)}/100` : "Click Run scan"}
                   </div>
                 </div>
               ) : (
                 visibleFindings.map(f => <FindingRow key={f.id} finding={f} onFix={handleFix} fixed={false} />)
               )}
               {fixedIds.size > 0 && (
-                <div style={{ marginTop: 24 }}>
-                  <div style={{ color: "#334455", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>RESOLVED THIS SESSION</div>
+                <div style={{ marginTop: "var(--space-4)" }}>
+                  <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Resolved this session</div>
                   {scanResult.findings.filter(f => fixedIds.has(f.id)).map(f => (
                     <FindingRow key={f.id} finding={f} onFix={() => {}} fixed={true} />
                   ))}
@@ -768,66 +733,72 @@ export default function ClawSecDashboard() {
 
           {/* ══ AGENTS ══ */}
           {tab === "agents" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 2, marginBottom: 12 }}>KAIROS — PRIMARY AGENT</div>
-                <AgentStatusBar heartbeat={heartbeat} apiConnected={apiConnected} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+              <div>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Agent hierarchy</div>
+                <AgentHierarchy
+                  heartbeat={heartbeat}
+                  domains={scanResult.domains}
+                  findings={visibleFindings}
+                  apiConnected={apiConnected}
+                  onSubAgentClick={() => setTab("findings")}
+                />
               </div>
-              {[
-                { name: "clawsec-env",     domain: "credentials", desc: "Scans .env, git history, process env for exposed secrets" },
-                { name: "clawsec-perm",    domain: "identity",    desc: "Monitors SOUL.md, CONSTRAINTS.md and file permissions" },
-                { name: "clawsec-net",     domain: "network",     desc: "Checks port binding, gateway exposure, CORS policy" },
-                { name: "clawsec-session", domain: "sessions",    desc: "Audits session files, memory store permissions and isolation" },
-                { name: "clawsec-config",  domain: "config",      desc: "Validates openclaw.json, exec_security, dm_policy, MCP servers" },
-              ].map(agent => {
-                const domFindings = visibleFindings.filter(f => f.domain === agent.domain);
-                const ok = domFindings.length === 0;
-                const c = ok ? SEV.ok : (SEV[domFindings[0]?.severity || "medium"] ?? SEV.medium);
-                const domData = scanResult.domains[agent.domain];
-                return (
-                  <div key={agent.name} style={{ background: "#07070f", border: `1px solid ${c.border}33`, borderRadius: 8, padding: "16px 18px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                      <GlowDot color={c.glow} pulse={!ok} />
-                      <span style={{ color: "#9aafcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1 }}>{agent.name}</span>
-                      <span style={{ marginLeft: "auto", color: c.text, fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-                        {ok ? "CLEAN" : `${domFindings.length} FINDING${domFindings.length !== 1 ? "S" : ""}`}
-                      </span>
-                    </div>
-                    <div style={{ color: "#556677", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 10 }}>{agent.desc}</div>
-                    <div style={{ display: "flex", gap: 12, color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-                      {domData?.duration_ms > 0 && <span>LAST RUN: {domData.duration_ms}ms</span>}
-                      <span>DOMAIN: {agent.domain.toUpperCase()}</span>
-                    </div>
-                    {domFindings.length > 0 && (
-                      <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {domFindings.map(f => (
-                          <span key={f.id} style={{ background: (SEV[f.severity] ?? SEV.info).bg, border: `1px solid ${(SEV[f.severity] ?? SEV.info).border}44`, color: (SEV[f.severity] ?? SEV.info).text, borderRadius: 3, padding: "1px 7px", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-                            {f.id}
-                          </span>
-                        ))}
+              <div>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: 10, fontWeight: 500, marginBottom: "var(--space-2)" }}>Sub-agents</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
+                  {[
+                    { name: "clawsec-env", domain: "credentials", desc: "Scans .env, git history, process env for exposed secrets" },
+                    { name: "clawsec-perm", domain: "identity", desc: "Monitors SOUL.md, CONSTRAINTS.md and file permissions" },
+                    { name: "clawsec-net", domain: "network", desc: "Checks port binding, gateway exposure, CORS policy" },
+                    { name: "clawsec-session", domain: "sessions", desc: "Audits session files, memory store permissions" },
+                    { name: "clawsec-config", domain: "config", desc: "Validates openclaw.json, exec_security, dm_policy" },
+                  ].map(agent => {
+                    const domFindings = visibleFindings.filter(f => f.domain === agent.domain);
+                    const ok = domFindings.length === 0;
+                    const c = ok ? SEV.ok : (SEV[domFindings[0]?.severity || "medium"] ?? SEV.medium);
+                    const domData = scanResult.domains[agent.domain];
+                    return (
+                      <div key={agent.name} style={{
+                        background: "var(--bg-card)", border: `1px solid ${c.border}44`, borderRadius: "var(--radius-md)",
+                        padding: "var(--space-3)", transition: "all 0.2s",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                          <GlowDot color={c.glow} pulse={!ok} />
+                          <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{agent.name}</span>
+                          <span style={{ marginLeft: "auto", color: c.text, fontFamily: "var(--font-mono)", fontSize: 9 }}>{ok ? "OK" : `${domFindings.length} finding(s)`}</span>
+                        </div>
+                        <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10, marginBottom: 6 }}>{agent.desc}</div>
+                        <div style={{ display: "flex", gap: 8, color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>
+                          {domData?.duration_ms > 0 && <span>Last run: {domData.duration_ms}ms</span>}
+                          <span>Domain: {agent.domain}</span>
+                        </div>
+                        {domFindings.length > 0 && (
+                          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {domFindings.map(f => (
+                              <span key={f.id} style={{ background: (SEV[f.severity] ?? SEV.info).bg, border: `1px solid ${(SEV[f.severity] ?? SEV.info).border}44`, color: (SEV[f.severity] ?? SEV.info).text, borderRadius: 3, padding: "1px 6px", fontFamily: "var(--font-mono)", fontSize: 9 }}>{f.id}</span>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
           {/* ══ CHANGELOG ══ */}
           {tab === "changelog" && (
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <div style={{ color: "#667788", fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
-                  {changelog.length} entries · append-only · live
-                </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-2)" }}>
+                <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{changelog.length} entries</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <GlowDot color="#4a7fcc" pulse={!paused && apiConnected} />
-                  <span style={{ color: "#334466", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-                    {apiConnected ? "STREAMING" : "OFFLINE"}
-                  </span>
+                  <GlowDot color="var(--accent-blue)" pulse={!paused && apiConnected} />
+                  <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>{apiConnected ? "Live" : "Offline"}</span>
                 </div>
               </div>
-              <div style={{ background: "#050510", border: "1px solid #0f0f1e", borderRadius: 8, padding: 4 }}>
+              <div style={{ background: "var(--bg-base)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", padding: 4 }}>
                 <ChangelogViewer entries={changelog} />
               </div>
             </div>
@@ -835,49 +806,47 @@ export default function ClawSecDashboard() {
 
           {/* ══ CONFIG ══ */}
           {tab === "config" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <ConfigEditor title="SOUL.md — Identity Anchor" content={configs.soul} readOnly={true} onSave={() => {}} />
-              <ConfigEditor title="CONSTRAINTS.md — Hard Limits" content={configs.constraints} readOnly={true} onSave={() => {}} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+              <ConfigEditor title="SOUL.md — Identity" content={configs.soul} readOnly={true} onSave={() => {}} />
+              <ConfigEditor title="CONSTRAINTS.md — Hard limits" content={configs.constraints} readOnly={true} onSave={() => {}} />
               <ConfigEditor
-                title="GATEWAY.md — Routing Rules"
+                title="GATEWAY.md — Routing"
                 content={configs.gateway}
                 readOnly={false}
                 onSave={(v) => {
                   const updated = { ...configs, gateway: v };
                   setConfigs(updated);
                   saveLocalConfig(updated);
-                  addNotification("GATEWAY.md lokal gespeichert", "info");
+                  addNotification("GATEWAY.md saved", "info");
                 }}
               />
-              <div style={{ background: "#07070f", border: "1px solid #0f0f1e", borderRadius: 8, padding: 16 }}>
-                <div style={{ color: "#7c9fcc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11, letterSpacing: 1, marginBottom: 12 }}>AUTH TOKEN</div>
-                <div style={{ color: "#556677", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
-                  Für POST /api/apply/ (Auto-Fix) wird der ClawSec-Token benötigt.
-                  <br />Token wird nur für die aktuelle Browser-Session gespeichert.
-                  <br />Token liegt auf dem Server unter: <span style={{ color: "#334455" }}>.clawsec_token</span>
+              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", padding: "var(--space-4)" }}>
+                <div style={{ color: "var(--accent-blue)", fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 600, marginBottom: "var(--space-2)" }}>Auth token</div>
+                <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10, marginBottom: "var(--space-2)", lineHeight: 1.6 }}>
+                  Required for POST /api/apply/. Stored in session only.
+                  <br />Server path: <span style={{ color: "var(--text-muted)" }}>.clawsec_token</span>
                 </div>
                 <input
                   type="password"
-                  placeholder="Token einfügen..."
+                  placeholder="Paste token…"
                   value={clawsecToken}
                   onChange={(e) => { setClawsecToken(e.target.value); saveToken(e.target.value); }}
                   style={{
-                    width: "100%", background: "#050510", border: "1px solid #1a1a2e",
-                    borderRadius: 6, color: "#8899aa",
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                    padding: "8px 12px", outline: "none", boxSizing: "border-box",
+                    width: "100%", background: "var(--bg-base)", border: "1px solid var(--border-default)",
+                    borderRadius: "var(--radius-sm)", color: "var(--text-secondary)",
+                    fontFamily: "var(--font-mono)", fontSize: 10,
+                    padding: "var(--space-2)", outline: "none", boxSizing: "border-box",
                   }}
                 />
-                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ marginTop: "var(--space-2)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
                   {[
-                    { label: "TICK INTERVAL",     value: "—" },
-                    { label: "HEARTBEAT",          value: "15s" },
-                    { label: "SCAN TIMEOUT",       value: "35s" },
-                    { label: "TOOL CALL BASELINE", value: "20/5min" },
+                    { label: "Heartbeat", value: "15s" },
+                    { label: "Scan timeout", value: "35s" },
+                    { label: "Tool baseline", value: "20/5min" },
                   ].map(({ label, value }) => (
-                    <div key={label} style={{ padding: "8px 0", borderBottom: "1px solid #0a0a18" }}>
-                      <div style={{ color: "#445566", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1, marginBottom: 3 }}>{label}</div>
-                      <div style={{ color: "#7788aa", fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}>{value}</div>
+                    <div key={label} style={{ padding: "6px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+                      <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9, marginBottom: 2 }}>{label}</div>
+                      <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{value}</div>
                     </div>
                   ))}
                 </div>
@@ -888,15 +857,15 @@ export default function ClawSecDashboard() {
         </div>
 
         {/* Footer */}
-        <div style={{ borderTop: "1px solid #07070f", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: 1 }}>
-            CLAWSEC 2.0 · OPENCLAW SECURITY PLANE · {new Date().toLocaleDateString("de-DE")}
+        <div style={{ borderTop: "1px solid var(--border-default)", padding: "var(--space-2) var(--space-4)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>
+            ClawSec 2.0 · OpenClaw Security · {new Date().toLocaleDateString("de-DE")}
           </div>
-          <div style={{ display: "flex", gap: 16, color: "#223344", fontFamily: "'Share Tech Mono', monospace", fontSize: 9 }}>
-            <span>OWASP LLM TOP 10:2025</span>
-            <span>OWASP AGENTIC AI:2026</span>
-            <span style={{ color: apiConnected ? "#003322" : "#330000" }}>
-              BACKEND: {apiConnected ? "CONNECTED" : "OFFLINE"}
+          <div style={{ display: "flex", gap: 16, color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 9 }}>
+            <span>OWASP LLM Top 10</span>
+            <span>OWASP ASI 2025</span>
+            <span style={{ color: apiConnected ? "var(--accent-green)" : "var(--accent-red)" }}>
+              {apiConnected ? "Connected" : "Offline"}
             </span>
           </div>
         </div>
