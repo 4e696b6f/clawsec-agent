@@ -10,8 +10,8 @@ Type=simple
 User=piko
 WorkingDirectory=/home/piko/.openclaw/workspace/clawsec
 ExecStart=/usr/bin/python3 /home/piko/.openclaw/workspace/clawsec/scripts/server.py
-Restart=on-failure
-RestartSec=5s
+Restart=always
+RestartSec=10s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=clawsec
@@ -22,12 +22,10 @@ NoNewPrivileges=yes
 # Private /tmp — isolated from other services
 PrivateTmp=yes
 # Filesystem protection — only explicit ReadWritePaths can be written
-ProtectSystem=strict
-# Reports dir must be writable; rest of openclaw is read-only
-ReadWritePaths=/home/piko/.openclaw/workspace/clawsec/reports
-ReadOnlyPaths=/home/piko/.openclaw
-# Home directory is read-only (scanner reads config, never writes outside reports)
-ProtectHome=read-only
+ProtectSystem=full
+# Backend needs to write reports/logs/token files and approved config updates in workspace/
+ReadWritePaths=/home/piko/.openclaw/workspace
+ProtectHome=false
 
 # ── Environment ───────────────────────────────────────────────────────────────
 # These are overridden by install.sh with the real user's home path

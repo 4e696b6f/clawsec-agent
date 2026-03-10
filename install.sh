@@ -100,33 +100,33 @@ ok "Reports directory ready (mode 700): ${INSTALL_DIR}/reports"
 # Skills are installed under the normalized flat OpenClaw naming scheme:
 #   ~/.openclaw/skills/<skill-name>/SKILL.md
 #
-# Source layout (repo)              →  Target layout (OpenClaw)
+# Canonical source layout (repo)     →  Target layout (OpenClaw)
 # skills/clawsec-coordinator/SKILL.md  →  skills/clawsec-coordinator/SKILL.md
-# skills/agents/env-agent/SKILL.md     →  skills/clawsec-env/SKILL.md
-# skills/agents/permission-agent/SKILL.md → skills/clawsec-perm/SKILL.md
-# skills/agents/network-agent/SKILL.md    → skills/clawsec-net/SKILL.md
-# skills/agents/session-agent/SKILL.md    → skills/clawsec-session/SKILL.md
-# skills/agents/config-agent/SKILL.md     → skills/clawsec-config/SKILL.md
+# skills/clawsec-env/SKILL.md          →  skills/clawsec-env/SKILL.md
+# skills/clawsec-perm/SKILL.md         →  skills/clawsec-perm/SKILL.md
+# skills/clawsec-net/SKILL.md          →  skills/clawsec-net/SKILL.md
+# skills/clawsec-session/SKILL.md      →  skills/clawsec-session/SKILL.md
+# skills/clawsec-config/SKILL.md       →  skills/clawsec-config/SKILL.md
 
 step "Installing skills..."
 
 # Array entries: "target-skill-name:relative-source-path"
 SKILL_MAP=(
   "clawsec-coordinator:skills/clawsec-coordinator/SKILL.md"
-  "clawsec-env:skills/agents/env-agent/SKILL.md"
-  "clawsec-perm:skills/agents/permission-agent/SKILL.md"
-  "clawsec-net:skills/agents/network-agent/SKILL.md"
-  "clawsec-session:skills/agents/session-agent/SKILL.md"
-  "clawsec-config:skills/agents/config-agent/SKILL.md"
-)
-
-# Also try normalized paths (skills/clawsec-*/SKILL.md) as fallback
-SKILL_MAP_NORMALIZED=(
   "clawsec-env:skills/clawsec-env/SKILL.md"
   "clawsec-perm:skills/clawsec-perm/SKILL.md"
   "clawsec-net:skills/clawsec-net/SKILL.md"
   "clawsec-session:skills/clawsec-session/SKILL.md"
   "clawsec-config:skills/clawsec-config/SKILL.md"
+)
+
+# Legacy fallback paths from older repo layout
+SKILL_MAP_LEGACY=(
+  "clawsec-env:skills/agents/env-agent/SKILL.md"
+  "clawsec-perm:skills/agents/permission-agent/SKILL.md"
+  "clawsec-net:skills/agents/network-agent/SKILL.md"
+  "clawsec-session:skills/agents/session-agent/SKILL.md"
+  "clawsec-config:skills/agents/config-agent/SKILL.md"
 )
 
 install_skill() {
@@ -161,17 +161,17 @@ for entry in "${SKILL_MAP[@]}"; do
     ok "Skill installed: ${skill_name}"
     SKILLS_OK=$(( SKILLS_OK + 1 ))
   else
-    # Try normalized path as fallback
-    NORMALIZED_SRC=""
-    for norm_entry in "${SKILL_MAP_NORMALIZED[@]}"; do
-      if [[ "${norm_entry%%:*}" == "$skill_name" ]]; then
-        NORMALIZED_SRC="${norm_entry#*:}"
+    # Try legacy path as fallback
+    LEGACY_SRC=""
+    for legacy_entry in "${SKILL_MAP_LEGACY[@]}"; do
+      if [[ "${legacy_entry%%:*}" == "$skill_name" ]]; then
+        LEGACY_SRC="${legacy_entry#*:}"
         break
       fi
     done
 
-    if [[ -n "$NORMALIZED_SRC" ]] && install_skill "$skill_name" "$NORMALIZED_SRC"; then
-      ok "Skill installed (normalized path): ${skill_name}"
+    if [[ -n "$LEGACY_SRC" ]] && install_skill "$skill_name" "$LEGACY_SRC"; then
+      warn "Skill installed from legacy source path: ${skill_name}"
       SKILLS_OK=$(( SKILLS_OK + 1 ))
     else
       warn "Skill source not found — skipped: ${skill_name} (checked ${skill_src})"
@@ -201,6 +201,21 @@ fi
 
 cp "${INSTALL_DIR}/src/coordinator.ts" "${EXTENSION_DIR}/index.ts"
 ok "Plugin entry: ${EXTENSION_DIR}/index.ts"
+
+# Coordinator runtime imports local modules; copy them alongside index.ts.
+for module_file in \
+  "src/coordinator-types.ts" \
+  "src/coordinator-risk.ts" \
+  "src/coordinator-reports.ts" \
+  "src/coordinator-remediation.ts" \
+  "src/policy.ts"; do
+  if [[ -f "${INSTALL_DIR}/${module_file}" ]]; then
+    cp "${INSTALL_DIR}/${module_file}" "${EXTENSION_DIR}/$(basename "${module_file}")"
+    ok "Plugin module: ${EXTENSION_DIR}/$(basename "${module_file}")"
+  else
+    warn "Plugin module missing: ${module_file}"
+  fi
+done
 
 cp "${INSTALL_DIR}/openclaw.plugin.json" "${EXTENSION_DIR}/openclaw.plugin.json"
 ok "Plugin manifest: ${EXTENSION_DIR}/openclaw.plugin.json"

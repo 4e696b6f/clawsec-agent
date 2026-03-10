@@ -149,6 +149,7 @@ python3 scripts/tests/check_deployment_parity.py
 - `reports/` is gitignored and created with `chmod 700`
 - `SOUL.md` and `CONSTRAINTS.md` are set to `chmod 444` (immutable)
 - Auth token uses `hmac.compare_digest` for timing-safe comparison
+- Operational logs never include token values or token previews
 
 ---
 

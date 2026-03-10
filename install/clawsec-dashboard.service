@@ -7,9 +7,9 @@ Wants=clawsec.service
 Type=simple
 User=%i
 WorkingDirectory=%h/.openclaw/workspace/clawsec/dashboard
-ExecStart=/usr/bin/npm run preview
-Restart=on-failure
-RestartSec=5
+ExecStart=/usr/bin/npm run preview -- --host 127.0.0.1 --port 8081
+Restart=always
+RestartSec=10
 Environment=NODE_ENV=production
 
 [Install]

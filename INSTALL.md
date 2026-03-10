@@ -11,6 +11,7 @@ bash install.sh --openclaw-home /path/to/.openclaw
 ```
 
 The installer handles everything: workspace copy, skills, extension, permissions, and plugin activation.
+Canonical skill sources are `skills/clawsec-*`; legacy `skills/agents/*` is fallback-only.
 
 ---
 

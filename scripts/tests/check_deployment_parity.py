@@ -59,11 +59,16 @@ def main() -> int:
     # Extension files installed by install.sh
     extension_pairs = [
         (ROOT / "src" / "coordinator.ts", ext_dir / "index.ts"),
+        (ROOT / "src" / "coordinator-types.ts", ext_dir / "coordinator-types.ts"),
+        (ROOT / "src" / "coordinator-risk.ts", ext_dir / "coordinator-risk.ts"),
+        (ROOT / "src" / "coordinator-reports.ts", ext_dir / "coordinator-reports.ts"),
+        (ROOT / "src" / "coordinator-remediation.ts", ext_dir / "coordinator-remediation.ts"),
+        (ROOT / "src" / "policy.ts", ext_dir / "policy.ts"),
         (ROOT / "openclaw.plugin.json", ext_dir / "openclaw.plugin.json"),
         (ROOT / "tsconfig.json", ext_dir / "tsconfig.json"),
     ]
 
-    # Skill mapping mirrors install.sh behavior (agents path first, then normalized fallback).
+    # Skill mapping mirrors install.sh behavior (canonical source first).
     skill_pairs = [
         (
             ROOT / "skills" / "clawsec-coordinator" / "SKILL.md",
@@ -71,36 +76,36 @@ def main() -> int:
         ),
         (
             choose_skill_source(
-                ROOT / "skills" / "agents" / "env-agent" / "SKILL.md",
                 ROOT / "skills" / "clawsec-env" / "SKILL.md",
+                ROOT / "skills" / "agents" / "env-agent" / "SKILL.md",
             ),
             skills_dir / "clawsec-env" / "SKILL.md",
         ),
         (
             choose_skill_source(
-                ROOT / "skills" / "agents" / "permission-agent" / "SKILL.md",
                 ROOT / "skills" / "clawsec-perm" / "SKILL.md",
+                ROOT / "skills" / "agents" / "permission-agent" / "SKILL.md",
             ),
             skills_dir / "clawsec-perm" / "SKILL.md",
         ),
         (
             choose_skill_source(
-                ROOT / "skills" / "agents" / "network-agent" / "SKILL.md",
                 ROOT / "skills" / "clawsec-net" / "SKILL.md",
+                ROOT / "skills" / "agents" / "network-agent" / "SKILL.md",
             ),
             skills_dir / "clawsec-net" / "SKILL.md",
         ),
         (
             choose_skill_source(
-                ROOT / "skills" / "agents" / "session-agent" / "SKILL.md",
                 ROOT / "skills" / "clawsec-session" / "SKILL.md",
+                ROOT / "skills" / "agents" / "session-agent" / "SKILL.md",
             ),
             skills_dir / "clawsec-session" / "SKILL.md",
         ),
         (
             choose_skill_source(
-                ROOT / "skills" / "agents" / "config-agent" / "SKILL.md",
                 ROOT / "skills" / "clawsec-config" / "SKILL.md",
+                ROOT / "skills" / "agents" / "config-agent" / "SKILL.md",
             ),
             skills_dir / "clawsec-config" / "SKILL.md",
         ),
