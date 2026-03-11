@@ -11,24 +11,31 @@ if [[ ! -d "$TARGET_DIR" ]]; then
   exit 1
 fi
 
+# JSON-safe add_finding function - passes data via stdin to avoid shell injection
 FINDINGS="[]"
 add_finding() {
   local id="$1" severity="$2" message="$3" owasp_llm="$4" owasp_asi="$5" tier="$6" rec="$7"
-  FINDINGS=$(echo "$FINDINGS" | python3 -c "
+  
+  # Use python3 to safely build JSON - avoid shell interpolation issues with single quotes
+  # Pass existing FINDINGS via stdin to avoid bash string escaping problems
+  FINDINGS=$(python3 -c "
 import json, sys
-findings = json.load(sys.stdin)
-findings.append({
-  'id': '$id',
-  'severity': '$severity',
-  'message': '$message',
-  'owasp_llm': $([ '$owasp_llm' = 'null' ] && echo 'null' || echo \"\\\"$owasp_llm\\\"\"),
-  'owasp_asi': $([ '$owasp_asi' = 'null' ] && echo 'null' || echo \"\\\"$owasp_asi\\\"\"),
-  'remediation_tier': '$tier',
-  'recommendation': '$rec',
-  'status': 'open'
+
+# Read existing findings from stdin
+data = json.load(sys.stdin)
+
+data.append({
+    'id': '$id',
+    'severity': '$severity',
+    'message': '$message',
+    'owasp_llm': None if '$owasp_llm' == 'null' else '$owasp_llm',
+    'owasp_asi': None if '$owasp_asi' == 'null' else '$owasp_asi',
+    'remediation_tier': '$tier',
+    'recommendation': '$rec',
+    'status': 'open'
 })
-print(json.dumps(findings))
-")
+print(json.dumps(data))
+" <<< "$FINDINGS")
 }
 
 OPENCLAW_JSON="$TARGET_DIR/openclaw.json"

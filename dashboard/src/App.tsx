@@ -432,13 +432,19 @@ export default function ClawSecDashboard() {
   }, []);
 
   // ── Mount: load last report + heartbeat ───────────────────────────────────
+  // Use ref to track initialization to avoid infinite loops
+  const mountedRef = useRef(false);
   useEffect(() => {
+    if (mountedRef.current) return;
+    mountedRef.current = true;
+    
     fetchLastReport()
       .then(raw => {
         if (raw) {
           setScanResult(raw);
           setApiConnected(true);
           setApiError(null);
+          // Use existing scoreHistory state which was initialized from localStorage
           const newHistory = [...scoreHistory, raw.risk_score].slice(-50);
           setScoreHistory(newHistory);
           saveHistory(newHistory);
@@ -457,7 +463,7 @@ export default function ClawSecDashboard() {
     fetchAppliedFixes()
       .then(af => { setAppliedFixes(af); })
       .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Config tab: fetch token path hint when API connected ───────────────────
   useEffect(() => {

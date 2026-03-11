@@ -122,7 +122,14 @@ function register(api: PluginApi) {
     const isMutatingTool = MUTATING_TOOL_NAMES.includes(toolName);
     if (isMutatingTool) {
       const target = String(params.path || params.file || "");
-      if (IMMUTABLE_FILES.some((name) => target.includes(name))) {
+      // Use path normalization and exact matching to avoid false positives
+      // e.g., "not_SOUL.md" should NOT match "SOUL.md"
+      const homeDir = process.env.HOME || "";
+      const normalizedTarget = target.replace(/^~\//, homeDir + "/").replace(/\/+/g, "/");
+      const isImmutable = IMMUTABLE_FILES.some((name) => 
+        normalizedTarget.endsWith("/" + name) || normalizedTarget === name
+      );
+      if (isImmutable) {
         console.error(`[CLAWSEC] BLOCKED: Attempted write to immutable file: ${target}`);
         return { skip: true, reason: "ClawSec: immutable file protection" };
       }
@@ -259,10 +266,20 @@ function register(api: PluginApi) {
   // ── Gateway RPC: clawsec.scan, clawsec.status ──────────────────────────────────────────
   if (typeof api.registerGatewayMethod === "function") {
     api.registerGatewayMethod("clawsec.scan", ({ respond }) => {
-      fetchScan().then((r) => respond(r.ok, r.data ?? r.error)).catch((e) => respond(false, String(e)));
+      fetchScan()
+        .then((r) => respond(r.ok, r.data ?? r.error))
+        .catch((e) => {
+          console.error("[CLAWSEC] Gateway RPC scan error:", e);
+          respond(false, String(e));
+        });
     });
     api.registerGatewayMethod("clawsec.status", ({ respond }) => {
-      fetchHealth().then((h) => respond(!!h, h ?? { error: "Unreachable" })).catch((e) => respond(false, String(e)));
+      fetchHealth()
+        .then((h) => respond(!!h, h ?? { error: "Unreachable" }))
+        .catch((e) => {
+          console.error("[CLAWSEC] Gateway RPC status error:", e);
+          respond(false, String(e));
+        });
     });
   }
 

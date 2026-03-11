@@ -195,7 +195,8 @@ def compute_system_hash() -> str:
     h = hashlib.sha256()
     for fp in identity_files:
         try:
-            h.update(open(fp, "rb").read())
+            with open(fp, "rb") as f:
+                h.update(f.read())
         except (FileNotFoundError, PermissionError):
             h.update(fp.encode())
     return h.hexdigest()[:8]

@@ -35,11 +35,13 @@ const AGENT_DOMAIN: Record<string, string> = {
 // ─── Risk score (mirrors coordinator.ts formula exactly) ─────────────────────
 // score = 30×critical + 15×high + 5×medium (auto_fixed excluded), capped at 100
 export function computeScore(findings: Finding[]): number {
-  const open = findings.filter(f => f.status !== "auto_fixed");
   let score = 0;
-  score += 30 * open.filter(f => f.severity === "critical").length;
-  score += 15 * open.filter(f => f.severity === "high").length;
-  score +=  5 * open.filter(f => f.severity === "medium").length;
+  for (const f of findings) {
+    if (f.status === "auto_fixed") continue;
+    if (f.severity === "critical") score += 30;
+    else if (f.severity === "high") score += 15;
+    else if (f.severity === "medium") score += 5;
+  }
   return Math.min(score, 100);
 }
 
