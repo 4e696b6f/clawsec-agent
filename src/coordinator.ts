@@ -274,7 +274,8 @@ function register(api: PluginApi) {
         }
         const data = result.data as { agent_results?: Record<string, { findings?: Array<{ severity?: string; status?: string }> }> };
         const count = data?.agent_results ? Object.values(data.agent_results).reduce((n, r) => n + (r.findings?.length ?? 0), 0) : 0;
-        const score = getRiskScore(data as ReturnType<typeof loadLastReport>);
+        // Compute score from raw agent_results (getRiskScore accepts partial ScanReport structure)
+        const score = getRiskScore(data as Parameters<typeof getRiskScore>[0]);
         return { text: `ClawSec scan complete. Risk score: ${score}/100. ${count} finding(s). Use /clawsec for full report.` };
       },
     });

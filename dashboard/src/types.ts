@@ -31,7 +31,7 @@ export interface AgentResult {
 /** Raw JSON returned by GET /api/scan and GET /api/last-report */
 export interface RawScanResponse {
   schema_version?: string;
-  timestamp: string;
+  timestamp?: string;  // Optional - server may send scanned_at instead
   scanned_at?: string;
   version: string;
   system_hash: string;
