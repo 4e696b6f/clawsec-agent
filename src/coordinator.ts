@@ -112,6 +112,49 @@ function register(api: PluginApi) {
     );
   }
 
+  // ── Skill integrity verification via hash ─────────────────────────────────────
+  // Verify SKILL.md files match known-good hashes from install-time manifest
+  // This detects tampering with skill prompts (OWASP LLM02/LLM07)
+  const crypto = require("crypto");
+  const manifestPath = path.join(skillsRoot, "..", "extensions", "clawsec", "skill-hashes.json");
+  let skillHashManifest: Record<string, string> = {};
+  try {
+    const manifestContent = fs.readFileSync(manifestPath, "utf-8");
+    skillHashManifest = JSON.parse(manifestContent);
+  } catch {
+    console.warn("[CLAWSEC] Skill hash manifest not found - skip integrity check");
+  }
+
+  let hashMismatches = 0;
+  for (const skillName of clawsecSkills) {
+    const skillPath = path.join(skillsRoot, skillName, "SKILL.md");
+    const expectedHash = skillHashManifest[skillName];
+    if (!expectedHash) continue; // No manifest entry for this skill
+    try {
+      const fileContent = fs.readFileSync(skillPath, "utf-8");
+      const actualHash = crypto.createHash("sha256").update(fileContent).digest("hex");
+      if (actualHash !== expectedHash) {
+        hashMismatches++;
+        console.error(
+          `[CLAWSEC] SECURITY ALERT: ${skillName}/SKILL.md hash mismatch! ` +
+          `Expected: ${expectedHash.slice(0, 16)}... Got: ${actualHash.slice(0, 16)}... ` +
+          `Skill may have been tampered with.`
+        );
+      }
+    } catch (e) {
+      // File may not exist - skip hash check
+    }
+  }
+
+  if (hashMismatches > 0) {
+    console.error(
+      `[CLAWSEC] ${hashMismatches} skill integrity violation(s) detected. ` +
+      `Re-run install.sh to restore original skills.`
+    );
+  } else if (Object.keys(skillHashManifest).length > 0) {
+    console.log("[CLAWSEC] Skill integrity verified");
+  }
+
   console.log("[CLAWSEC] ClawSec 2.0 plugin registered");
 
   // Hook: intercept any tool call that tries to touch SOUL.md or CONSTRAINTS.md

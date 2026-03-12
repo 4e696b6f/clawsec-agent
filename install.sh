@@ -227,6 +227,29 @@ if [[ -f "${INSTALL_DIR}/index.ts" ]]; then
       cp "${INSTALL_DIR}/${skill_src}" "${EXTENSION_DIR}/skills/${skill_name}/SKILL.md"
     fi
   done
+
+  # ── Generate skill integrity hashes ──────────────────────────────────────────
+  # Create a manifest of SHA256 hashes for runtime verification
+  echo "# Skill integrity hash manifest" > "${EXTENSION_DIR}/skill-hashes.json"
+  echo '{' >> "${EXTENSION_DIR}/skill-hashes.json"
+  first=true
+  for skill_dir in "${EXTENSION_DIR}"/skills/*/; do
+    skill_name=$(basename "$skill_dir")
+    skill_file="${skill_dir}SKILL.md"
+    if [[ -f "$skill_file" ]]; then
+      hash=$(sha256sum "$skill_file" | cut -d' ' -f1)
+      if [[ "$first" == true ]]; then
+        first=false
+      else
+        echo "," >> "${EXTENSION_DIR}/skill-hashes.json"
+      fi
+      printf '  "%s": "%s"' "$skill_name" "$hash" >> "${EXTENSION_DIR}/skill-hashes.json"
+    fi
+  done
+  echo '' >> "${EXTENSION_DIR}/skill-hashes.json"
+  echo '}' >> "${EXTENSION_DIR}/skill-hashes.json"
+  ok "Skill integrity hashes generated"
+
   ok "Plugin skills bundled: ${EXTENSION_DIR}/skills/"
   ok "Plugin entry: ${EXTENSION_DIR}/index.ts (with src/)"
 else
