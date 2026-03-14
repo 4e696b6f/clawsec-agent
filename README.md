@@ -1,8 +1,8 @@
 # ClawSec 2.0
 
-Autonomous multi-agent security scanner for **OpenClaw** (Claude-based agent runtime).
+Autonomous multi-agent security scanner for **OpenClaw**.
 
-> **Disclaimer:** ClawSec 2.0 is built for OpenClaw and tested on OpenClaw. It is not a general-purpose security tool. If you're not running OpenClaw, most checks will not apply.
+> **Disclaimer:**  UNDER DEVELOPMENT - USE AT YOUR OWN RISK.
 
 ---
 
